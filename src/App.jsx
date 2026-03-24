@@ -8,7 +8,7 @@ function App() {
   return (
     <TrackingRadar 
       useMockData={false}  // Use real tracking data
-      dataPath="../data/1886347_tracking_extrapolated.jsonl"
+      dataPath="/data/1886347_tracking_extrapolated.jsonl"
     />
   );
 }

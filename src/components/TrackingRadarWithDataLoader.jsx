@@ -63,13 +63,13 @@ const useTrackingData = (filePath, pitchLengthM = DEFAULT_PITCH_LENGTH_M, pitchW
             x: (p.x + halfLength) / pitchLengthM,
             y: (p.y + halfWidth) / pitchWidthM,
           })),
-          ball_data: frame.ball_data && frame.ball_data.x !== null
+          ball_data: frame.ball_data && frame.ball_data.x !== null && frame.ball_data.y !== null
             ? {
                 x: (frame.ball_data.x + halfLength) / pitchLengthM,
                 y: (frame.ball_data.y + halfWidth) / pitchWidthM,
                 is_detected: frame.ball_data.is_detected,
               }
-            : { x: 0.5, y: 0.5, is_detected: false },
+            : { x: null, y: null, is_detected: false },
         }));
 
         setData(normalized);
@@ -196,7 +196,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const animationRef = useRef(null);
 
   // Load match data first to get pitch dimensions
-  const { matchData } = useMatchData('../../data/1886347_match.json');
+  const { matchData } = useMatchData('/data/1886347_match.json');
 
   // Get pitch dimensions from match data or use defaults
   const pitchLength = matchData?.pitch_length || DEFAULT_PITCH_LENGTH_M;
@@ -208,14 +208,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const canvasHeight = Math.round(CANVAS_WIDTH * (pitchWidth / pitchLength));
 
   // Load real data or use mock with correct pitch dimensions
-  const { data: loadedData, loading, error } = useTrackingData(dataPath || '../../data/1886347_tracking_extrapolated.jsonl', pitchLength, pitchWidth);
+  const { data: loadedData, loading, error } = useTrackingData(dataPath || '/data/1886347_tracking_extrapolated.jsonl', pitchLength, pitchWidth);
   
   const trackingData = useMockData ? generateMockData() : loadedData;
-
-  // Apply filter: only show frames where ball is detected (if enabled)
-  const filteredTrackingData = filterBallInAction 
-    ? trackingData.filter(frame => frame.ball_data?.is_detected === true)
-    : trackingData;
 
   // Extract team and color info from match data
   const getTeamInfo = useCallback(() => {
@@ -259,17 +254,36 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const teamInfo = getTeamInfo();
   const playerMeta = getPlayerMeta();
 
-  const totalFrames = filteredTrackingData.length;
+  // Use TOTAL trackingData for frame indexing, independent of filter
+  const totalFrames = trackingData.length;
   const maxTime = totalFrames > 0 ? (totalFrames - 1) / FPS : 0;
 
-  // Direct frame indexing (O(1) lookup)
+  // Direct frame indexing on TOTAL data (O(1) lookup) - always same frame regardless of filter
   const frameIndex = Math.min(Math.floor(timeSeconds * FPS), Math.max(0, totalFrames - 1));
-  const currentFrame = filteredTrackingData[frameIndex] || {
+  const currentFrame = trackingData[frameIndex] || {
     timestamp: '0',
     frameNumber: 0,
     player_data: [],
-    ball_data: { x: 0.5, y: 0.5, is_detected: false },
+    ball_data: { x: null, y: null, is_detected: false },
   };
+
+  // Check if current frame is visible based on filter
+  const isCurrentFrameVisible = !filterBallInAction || (
+    currentFrame.ball_data && 
+    currentFrame.ball_data.x !== null && 
+    currentFrame.ball_data.y !== null && 
+    currentFrame.ball_data.is_detected === true
+  );
+
+  // Count filtered frames for display
+  const filteredFramesCount = filterBallInAction
+    ? trackingData.filter(frame => 
+        frame.ball_data && 
+        frame.ball_data.x !== null && 
+        frame.ball_data.y !== null && 
+        frame.ball_data.is_detected === true
+      ).length
+    : trackingData.length;
 
   // Helper functions for player data
   const getPlayerTeamId = (player) => {
@@ -346,9 +360,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       ctx.fillText(String(number), px, py);
     });
 
-    // Draw ball only if it has valid data
+    // Draw ball only if it has valid coordinates (regardless of is_detected)
     const ballData = currentFrame.ball_data;
-    const hasBallData = ballData && ballData.x !== null && ballData.y !== null && ballData.is_detected === true;
+    const hasBallData = ballData && ballData.x !== null && ballData.y !== null;
     
     if (hasBallData) {
       const [ballX, ballY] = normalizedToPixels(ballData.x, ballData.y, CANVAS_WIDTH, canvasHeight);
@@ -604,7 +618,6 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
               checked={filterBallInAction}
               onChange={(e) => {
                 setFilterBallInAction(e.target.checked);
-                setTimeSeconds(0);
                 setIsPlaying(false);
               }}
               style={styles.checkbox}
@@ -613,7 +626,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
           </label>
           {filterBallInAction && (
             <div style={styles.filterInfo}>
-              Filtered: {filteredTrackingData.length} / {trackingData.length} frames
+              Filtered: {filteredFramesCount} / {trackingData.length} frames
             </div>
           )}
         </div>
