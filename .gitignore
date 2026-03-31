@@ -1,7 +1,7 @@
 node_modules/
 dist/
 build/
-public/data/1886347_enriched_tracking.json
+public/data/1886347_enriched_tracking.jsonl
 .env
 .env.local
 .DS_Store

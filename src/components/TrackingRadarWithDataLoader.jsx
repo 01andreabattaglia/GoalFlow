@@ -101,8 +101,21 @@ const useEnrichedTrackingData = (filePath) => {
       try {
         const response = await fetch(filePath);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const jsonData = await response.json();
-        setData(jsonData);
+        const text = await response.text();
+        
+        // Parse JSONL format (one JSON object per line)
+        const lines = text.trim().split('\n').filter(line => line.trim().length > 0);
+        const frames = lines.map((line, idx) => {
+          try {
+            return JSON.parse(line);
+          } catch (e) {
+            console.warn(`Failed to parse JSONL line ${idx}:`, e);
+            return null;
+          }
+        }).filter(f => f !== null);
+        
+        console.log(`Loaded ${frames.length} frames from enriched tracking JSONL`);
+        setData(frames);
         setError(null);
       } catch (err) {
         setError(err.message);
@@ -229,7 +242,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const { matchData } = useMatchData('/data/1886347_match.json');
 
   // Load enriched tracking data
-  const { data: enrichedTrackingData } = useEnrichedTrackingData('/data/1886347_enriched_tracking.json');
+  const { data: enrichedTrackingData } = useEnrichedTrackingData('/data/1886347_enriched_tracking.jsonl');
 
   // Get pitch dimensions from match data or use defaults
   const pitchLength = matchData?.pitch_length || DEFAULT_PITCH_LENGTH_M;
@@ -533,28 +546,87 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     team_id: p.team_id,
   })).sort((a, b) => a.number - b.number) : [];
 
+  // Helper function to calculate match time based on period
+  const getMatchTime = () => {
+    const period = currentFrame.period || 1;
+    const timestamp = currentFrame.timestamp || '00:00:00.0';
+    
+    if (period === 1) {
+      const seconds = parseTimestampToSeconds(timestamp);
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+    
+    // Period 2: subtract 45 minutes from timestamp
+    const seconds = parseTimestampToSeconds(timestamp);
+    const adjustedSeconds = Math.max(0, seconds - 45 * 60);
+    
+    const mins = Math.floor(adjustedSeconds / 60);
+    const secs = Math.floor(adjustedSeconds % 60);
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  // Helper function to format minutes to MM:SS
+  const formatMinutesPlayed = (minutes) => {
+    if (!minutes || isNaN(minutes)) return '00:00';
+    const mins = Math.floor(minutes);
+    const secs = Math.round((minutes - mins) * 60);
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
   // Get enriched tracking data for current frame
   let enrichedPlayersData = [];
   
   try {
-    if (enrichedTrackingData && enrichedTrackingData.length > 0 && currentFrame) {
-      const currentFrameNum = currentFrame?.frameNumber || currentFrame?.frame || frameIndex;
-      const enrichedFrame = enrichedTrackingData.find(f => f.frame === currentFrameNum);
+    if (enrichedTrackingData && enrichedTrackingData.length > 0) {
+      // Enriched data contains frames every 10 frames (0, 10, 20, 30...)
+      // Find the matching enriched frame by searching for the frame number
+      const targetFrameNum = Math.floor(frameIndex / 10) * 10;
       
-      if (enrichedFrame && enrichedFrame.players) {
-        enrichedPlayersData = enrichedFrame.players.map(p => ({
-          player_id: p.player_id,
-          name: p.name,
-          number: p.number,
-          team_id: p.team_id,
-          jersey_color: p.jersey_color,
-          velocity_kmh: p.velocity_kmh !== null ? p.velocity_kmh?.toFixed(2) : '--',
-          distance_cumulated: p.distance_cumulated !== null ? p.distance_cumulated?.toFixed(2) : 0,
-        })).sort((a, b) => parseFloat(b.distance_cumulated) - parseFloat(a.distance_cumulated));
+      const enrichedFrame = enrichedTrackingData.find(f => f && f.frame === targetFrameNum);
+      
+      if (enrichedFrame && enrichedFrame.players && Array.isArray(enrichedFrame.players)) {
+        enrichedPlayersData = enrichedFrame.players
+          .filter(p => p && p.name) // Filter out invalid players
+          .map(p => {
+            try {
+              const vel = parseFloat(p.velocity_kmh);
+              const dist = parseFloat(p.distance_cumulated);
+              const numberColor = p.team_id === teamInfo.home_id ? teamInfo.home_number : teamInfo.away_number;
+              
+              return {
+                player_id: p.player_id,
+                name: p.name || 'Unknown',
+                number: p.number || '?',
+                team_id: p.team_id,
+                jersey_color: p.jersey_color || '#000000',
+                number_color: numberColor || '#ffffff',
+                role: p.role || 'N/A',
+                status: p.status || 'unknown',
+                minutes_played: p.minutes_played !== undefined && p.minutes_played !== null ? parseFloat(p.minutes_played) : 0,
+                velocity_kmh: !isNaN(vel) && vel !== null ? vel.toFixed(2) : '--',
+                distance_cumulated: !isNaN(dist) && dist !== null ? (dist / 1000).toFixed(3) : '0.000',
+                walking_time: p.walking_time || '00:00',
+                jogging_time: p.jogging_time || '00:00',
+                sprinting_time: p.sprinting_time || '00:00',
+              };
+            } catch (playerErr) {
+              console.warn('Error mapping player:', p, playerErr);
+              return null;
+            }
+          })
+          .filter(p => p !== null)
+          .sort((a, b) => {
+            const distA = parseFloat(a.distance_cumulated);
+            const distB = parseFloat(b.distance_cumulated);
+            return isNaN(distB) || isNaN(distA) ? 0 : distB - distA;
+          });
       }
     }
   } catch (e) {
     console.error('Error getting enriched players data:', e);
+    enrichedPlayersData = [];
   }
 
   return (
@@ -590,33 +662,66 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
               <table style={styles.table}>
                 <thead>
                   <tr style={styles.tableHeader}>
-                    <th style={styles.tableHeaderCell}></th>
-                    <th style={styles.tableHeaderCell}>Nome</th>
+                    <th style={styles.tableHeaderCell}>Stato</th>
                     <th style={styles.tableHeaderCell}>#</th>
+                    <th style={styles.tableHeaderCell}>Nome</th>
+                    <th style={styles.tableHeaderCell}>Ruolo</th>
+                    <th style={styles.tableHeaderCell}>Min Giocati</th>
+                    <th style={styles.tableHeaderCell}>Distanza (km)</th>
                     <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
-                    <th style={styles.tableHeaderCell}>Distanza (m)</th>
+                    <th style={styles.tableHeaderCell}>Sprinting (min)</th>
+                    <th style={styles.tableHeaderCell}>Jogging (min)</th>
+                    <th style={styles.tableHeaderCell}>Walking (min)</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {enrichedPlayersData.map((player, idx) => (
+                  {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
+                    if (!player) return null;
+                    return (
                     <tr key={idx} style={styles.tableRow}>
-                      <td style={styles.tableCell}>
+                      <td style={{
+                        ...styles.tableCell,
+                        backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
+                        fontWeight: 'bold',
+                      }}>
+                        {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
+                      </td>
+                      <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
                         <div
                           style={{
-                            width: '12px',
-                            height: '12px',
+                            width: '28px',
+                            height: '28px',
                             borderRadius: '50%',
-                            backgroundColor: player.jersey_color,
-                            border: '1px solid #333',
+                            backgroundColor: player.jersey_color || '#000000',
+                            border: '2px solid #333',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: player.number_color || '#ffffff',
+                            fontWeight: 'bold',
+                            fontSize: '13px',
                           }}
-                        />
+                        >
+                          {player.number}
+                        </div>
                       </td>
-                      <td style={styles.tableCell}>{player.name}</td>
-                      <td style={styles.tableCell}>{player.number}</td>
-                      <td style={styles.tableCell}>{player.velocity_kmh}</td>
-                      <td style={styles.tableCell}>{player.distance_cumulated}</td>
+                      <td style={styles.tableCell}>{player.name || 'N/A'}</td>
+                      <td style={styles.tableCell}>{player.role || 'N/A'}</td>
+                      <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
+                      <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
+                      <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
+                      <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
+                      <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
+                      <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
                     </tr>
-                  ))}
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
+                        Caricamento dati...
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -628,14 +733,16 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       <div style={styles.controlsSection}>
         <h2 style={styles.title}>Football Tracking Radar</h2>
 
-        <div style={styles.timeDisplay}>
-          <span style={styles.timeLabel}>Match Time:</span>
-          <span style={styles.timeValue}>{currentFrame.timestamp || '--:--:--'}</span>
-        </div>
+        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '16px', backgroundColor: '#f9f9f9', borderRadius: '8px', marginBottom: '16px', borderLeft: '4px solid #1e90ff'}}>
+          <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+            <span style={{fontSize: '12px', color: '#999', fontWeight: '600', textTransform: 'uppercase'}}>Period</span>
+            <span style={{fontSize: '24px', fontWeight: 'bold', color: '#1e90ff'}}>{currentFrame.period || '-'}</span>
+          </div>
 
-        <div style={styles.periodDisplay}>
-          <span style={styles.periodLabel}>Period:</span>
-          <span style={styles.periodValue}>{currentFrame.period || '-'}</span>
+          <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+            <span style={{fontSize: '12px', color: '#999', fontWeight: '600', textTransform: 'uppercase'}}>Time</span>
+            <span style={{fontSize: '24px', fontWeight: 'bold', color: '#1e90ff', fontFamily: 'monospace'}}>{getMatchTime()}</span>
+          </div>
         </div>
 
         <div style={styles.framedisplaySection}>
@@ -879,10 +986,12 @@ const styles = {
   tableRow: {
     borderBottom: '1px solid #e0e0e0',
     transition: 'background-color 0.2s',
+    height: '28px',
   },
   tableCell: {
-    padding: '10px 12px',
+    padding: '4px 8px',
     borderRight: '1px solid #e0e0e0',
+    fontSize: '13px',
   },
   canvas: {
     border: '2px solid #333',
