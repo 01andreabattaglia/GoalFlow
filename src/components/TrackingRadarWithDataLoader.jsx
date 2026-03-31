@@ -89,6 +89,36 @@ const useTrackingData = (filePath, pitchLengthM = DEFAULT_PITCH_LENGTH_M, pitchW
 };
 
 /**
+ * Hook to load enriched tracking data with player stats (velocity, distance_cumulated)
+ */
+const useEnrichedTrackingData = (filePath) => {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const jsonData = await response.json();
+        setData(jsonData);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error loading enriched tracking data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [filePath]);
+
+  return { data, loading, error };
+};
+
+/**
  * Generate mock data with realistic dimensions (104m x 68m)
  */
 const generateMockData = (frameCount = 250) => {
@@ -197,6 +227,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Load match data first to get pitch dimensions
   const { matchData } = useMatchData('/data/1886347_match.json');
+
+  // Load enriched tracking data
+  const { data: enrichedTrackingData } = useEnrichedTrackingData('/data/1886347_enriched_tracking.json');
 
   // Get pitch dimensions from match data or use defaults
   const pitchLength = matchData?.pitch_length || DEFAULT_PITCH_LENGTH_M;
@@ -492,19 +525,106 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     );
   }
 
+  // Extract players data for table
+  const playersTable = matchData?.players ? matchData.players.map(p => ({
+    name: `${p.first_name} ${p.last_name}`,
+    number: p.number,
+    team: p.team_id === teamInfo.home_id ? matchData.home_team?.short_name : matchData.away_team?.short_name,
+    team_id: p.team_id,
+  })).sort((a, b) => a.number - b.number) : [];
+
+  // Get enriched tracking data for current frame
+  let enrichedPlayersData = [];
+  
+  try {
+    if (enrichedTrackingData && enrichedTrackingData.length > 0 && currentFrame) {
+      const currentFrameNum = currentFrame?.frameNumber || currentFrame?.frame || frameIndex;
+      const enrichedFrame = enrichedTrackingData.find(f => f.frame === currentFrameNum);
+      
+      if (enrichedFrame && enrichedFrame.players) {
+        enrichedPlayersData = enrichedFrame.players.map(p => ({
+          player_id: p.player_id,
+          name: p.name,
+          number: p.number,
+          team_id: p.team_id,
+          jersey_color: p.jersey_color,
+          velocity_kmh: p.velocity_kmh !== null ? p.velocity_kmh?.toFixed(2) : '--',
+          distance_cumulated: p.distance_cumulated !== null ? p.distance_cumulated?.toFixed(2) : 0,
+        })).sort((a, b) => parseFloat(b.distance_cumulated) - parseFloat(a.distance_cumulated));
+      }
+    }
+  } catch (e) {
+    console.error('Error getting enriched players data:', e);
+  }
+
   return (
     <div style={styles.container}>
-      {/* Canvas */}
-      <div style={styles.canvasSection}>
-        <canvas
-          ref={canvasRef}
-          width={CANVAS_WIDTH}
-          height={canvasHeight}
-          style={styles.canvas}
-        />
+      {/* Left Panel - Grid Layout */}
+      <div style={styles.leftPanel}>
+        {/* Top Row */}
+        <div style={styles.quadrantRow}>
+          {/* Top Left - Empty */}
+          <div style={styles.quadrant}>
+            <div style={styles.emptyQuadrant}>
+              <p style={styles.emptyText}>Quadrante Vuoto</p>
+            </div>
+          </div>
+          
+          {/* Top Right - Radar */}
+          <div style={styles.quadrant}>
+            <div style={styles.radarContainer}>
+              <canvas
+                ref={canvasRef}
+                width={CANVAS_WIDTH}
+                height={canvasHeight}
+                style={styles.canvas}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Row - Full Width Table */}
+        <div style={styles.bottomRow}>
+          <div style={styles.tableContainer}>
+            <div style={styles.tableWrapper}>
+              <table style={styles.table}>
+                <thead>
+                  <tr style={styles.tableHeader}>
+                    <th style={styles.tableHeaderCell}></th>
+                    <th style={styles.tableHeaderCell}>Nome</th>
+                    <th style={styles.tableHeaderCell}>#</th>
+                    <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
+                    <th style={styles.tableHeaderCell}>Distanza (m)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {enrichedPlayersData.map((player, idx) => (
+                    <tr key={idx} style={styles.tableRow}>
+                      <td style={styles.tableCell}>
+                        <div
+                          style={{
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: player.jersey_color,
+                            border: '1px solid #333',
+                          }}
+                        />
+                      </td>
+                      <td style={styles.tableCell}>{player.name}</td>
+                      <td style={styles.tableCell}>{player.number}</td>
+                      <td style={styles.tableCell}>{player.velocity_kmh}</td>
+                      <td style={styles.tableCell}>{player.distance_cumulated}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Controls */}
+      {/* Controls - Right Panel */}
       <div style={styles.controlsSection}>
         <h2 style={styles.title}>Football Tracking Radar</h2>
 
@@ -659,18 +779,120 @@ const styles = {
     backgroundColor: '#f5f5f5',
     minHeight: '100vh',
     fontFamily: 'system-ui, -apple-system, sans-serif',
+    height: '100%',
   },
-  canvasSection: {
+  leftPanel: {
     flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    minHeight: '0',
+  },
+  quadrantRow: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '20px',
+    flex: 1,
+    minHeight: '300px',
+  },
+  quadrant: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
+    padding: '10px',
+    minHeight: '300px',
+    overflow: 'hidden',
+  },
+  emptyQuadrant: {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f9f9f9',
+    borderRadius: '6px',
+    border: '2px dashed #ddd',
+  },
+  emptyText: {
+    color: '#999',
+    fontSize: '14px',
+    fontWeight: '600',
+    margin: 0,
+  },
+  radarContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    height: '100%',
+    padding: '10px',
+  },
+  bottomRow: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+    padding: '20px',
+    minHeight: '200px',
+    maxHeight: '300px',
+  },
+  tableContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    height: '100%',
+  },
+  tableTitle: {
+    margin: '0 0 12px 0',
+    fontSize: '16px',
+    fontWeight: '600',
+    color: '#333',
+    flexShrink: 0,
+  },
+  tableWrapper: {
+    overflowX: 'auto',
+    overflowY: 'auto',
+    borderRadius: '6px',
+    border: '1px solid #ddd',
+    flex: 1,
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontSize: '13px',
+  },
+  tableHeader: {
+    backgroundColor: '#f0f0f0',
+    borderBottom: '2px solid #ddd',
+    position: 'sticky',
+    top: 0,
+  },
+  tableHeaderCell: {
+    padding: '12px',
+    textAlign: 'left',
+    fontWeight: '600',
+    color: '#333',
+    borderRight: '1px solid #e0e0e0',
+  },
+  tableRow: {
+    borderBottom: '1px solid #e0e0e0',
+    transition: 'background-color 0.2s',
+  },
+  tableCell: {
+    padding: '10px 12px',
+    borderRight: '1px solid #e0e0e0',
   },
   canvas: {
     border: '2px solid #333',
     boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
     backgroundColor: '#2d5016',
     cursor: 'crosshair',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    width: 'auto',
+    height: 'auto',
   },
   controlsSection: {
     width: '280px',
