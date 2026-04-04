@@ -32,6 +32,36 @@ const useMatchData = (filePath) => {
 };
 
 /**
+ * Hook to load video synchronization data
+ */
+const useVideoSyncData = (filePath) => {
+  const [syncData, setSyncData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadSyncData = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        setSyncData(data);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error loading video sync data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadSyncData();
+  }, [filePath]);
+
+  return { syncData, loading, error };
+};
+
+/**
  * Hook to load JSONL tracking data from a file with proper coordinate normalization
  */
 const useTrackingData = (filePath, pitchLengthM = DEFAULT_PITCH_LENGTH_M, pitchWidthM = DEFAULT_PITCH_WIDTH_M) => {
@@ -245,6 +275,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   // Load enriched tracking data
   const { data: enrichedTrackingData } = useEnrichedTrackingData('/data/1886347_enriched_tracking.jsonl');
 
+  // Load video sync data
+  const { syncData } = useVideoSyncData('/data/video_sync.json');
+
   // Get pitch dimensions from match data or use defaults
   const pitchLength = matchData?.pitch_length || DEFAULT_PITCH_LENGTH_M;
   const pitchWidth = matchData?.pitch_width || DEFAULT_PITCH_WIDTH_M;
@@ -313,6 +346,32 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     player_data: [],
     ball_data: { x: null, y: null, is_detected: false },
   };
+
+  // Calculate synchronized video time from radar timestamp
+  const calculateSyncedVideoTime = useCallback(() => {
+    if (!syncData) return null;
+
+    const period = currentFrame.period || 1;
+    const timestamp = currentFrame.timestamp || '00:00:00.0';
+    
+    // Parse timestamp to seconds
+    const timeParts = timestamp.split(':');
+    const radarSeconds = parseInt(timeParts[0]) * 3600 + parseInt(timeParts[1]) * 60 + parseFloat(timeParts[2]);
+
+    // Calculate video time based on period
+    let videoTime;
+    if (period === 1) {
+      // First half: video_time = first_half_start + radar_seconds
+      videoTime = syncData.sync_points.first_half_start + radarSeconds;
+    } else {
+      // Second half: video_time = second_half_start + (radar_seconds - 45 minutes)
+      videoTime = syncData.sync_points.second_half_start + (radarSeconds - 45 * 60);
+    }
+
+    return Math.max(0, videoTime);
+  }, [currentFrame, syncData]);
+
+  const syncedVideoTime = calculateSyncedVideoTime();
 
   // Check if current frame is visible based on filter
   const isCurrentFrameVisible = !filterBallInAction || (
@@ -638,7 +697,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
         <div style={styles.quadrantRow}>
           {/* Top Left - Video Player */}
           <div style={styles.quadrant}>
-            <VideoPlayer />
+            <VideoPlayer syncedTime={syncedVideoTime} shouldPlay={isPlaying} />
           </div>
           
           {/* Top Right - Radar */}

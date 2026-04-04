@@ -1,12 +1,45 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useCallback, useMemo } from 'react';
 
-const VideoPlayer = ({ videoPath = '/data/Isuzu UTE A-League 2024-25 - Round 6 - Auckland FC v Newcastle Jets.mp4' }) => {
+const VideoPlayer = ({ 
+  videoPath = '/data/Isuzu UTE A-League 2024-25 - Round 6 - Auckland FC v Newcastle Jets.mp4',
+  syncedTime = null,
+  shouldPlay = false,
+  onPlayChange = null
+}) => {
   const videoRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const lastSyncTimeRef = useRef(null);
 
-  const handlePlayPause = () => {
+  // Sync play/pause command from radar
+  React.useEffect(() => {
+    if (videoRef.current) {
+      if (shouldPlay && !videoRef.current.paused) {
+        return; // Already playing
+      }
+      if (shouldPlay && videoRef.current.paused) {
+        videoRef.current.play().catch(err => console.log('Play error:', err));
+        setIsPlaying(true);
+      } else if (!shouldPlay && !videoRef.current.paused) {
+        videoRef.current.pause();
+        setIsPlaying(false);
+      }
+    }
+  }, [shouldPlay]);
+
+  // Debounce syncedTime to avoid frequent video.currentTime updates that cause lag
+  React.useEffect(() => {
+    if (syncedTime !== null && videoRef.current && isFinite(syncedTime)) {
+      // Only update if time diff is > 0.5 seconds to avoid jitter
+      if (lastSyncTimeRef.current === null || Math.abs(syncedTime - lastSyncTimeRef.current) > 0.5) {
+        videoRef.current.currentTime = syncedTime;
+        lastSyncTimeRef.current = syncedTime;
+      }
+    }
+  }, [syncedTime]);
+
+  const handlePlayPause = useCallback(() => {
     if (videoRef.current) {
       if (isPlaying) {
         videoRef.current.pause();
@@ -15,37 +48,37 @@ const VideoPlayer = ({ videoPath = '/data/Isuzu UTE A-League 2024-25 - Round 6 -
       }
       setIsPlaying(!isPlaying);
     }
-  };
+  }, [isPlaying]);
 
-  const handleTimeUpdate = () => {
+  const handleTimeUpdate = useCallback(() => {
     if (videoRef.current) {
       setCurrentTime(videoRef.current.currentTime);
     }
-  };
+  }, []);
 
-  const handleLoadedMetadata = () => {
+  const handleLoadedMetadata = useCallback(() => {
     if (videoRef.current) {
       setDuration(videoRef.current.duration);
     }
-  };
+  }, []);
 
-  const handleSliderChange = (e) => {
+  const handleSliderChange = useCallback((e) => {
     const newTime = parseFloat(e.target.value);
     setCurrentTime(newTime);
     if (videoRef.current) {
       videoRef.current.currentTime = newTime;
     }
-  };
+  }, []);
 
-  const formatTime = (seconds) => {
+  const formatTime = useCallback((seconds) => {
     if (!isFinite(seconds)) return '00:00:00';
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = Math.floor(seconds % 60);
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
+  }, []);
 
-  const styles = {
+  const styles = useMemo(() => ({
     container: {
       display: 'flex',
       flexDirection: 'column',
@@ -118,7 +151,7 @@ const VideoPlayer = ({ videoPath = '/data/Isuzu UTE A-League 2024-25 - Round 6 -
     buttonHover: {
       backgroundColor: '#106ebe',
     },
-  };
+  }), []);
 
   return (
     <div style={styles.container}>
