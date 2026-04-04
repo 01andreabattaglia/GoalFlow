@@ -267,6 +267,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const [jumpMinutes, setJumpMinutes] = useState(0);
   const [jumpSeconds, setJumpSeconds] = useState(0);
   const [jumpPeriod, setJumpPeriod] = useState(1);
+  const [wasTimeChangedManually, setWasTimeChangedManually] = useState(false);
   const animationRef = useRef(null);
 
   // Load match data first to get pitch dimensions
@@ -371,7 +372,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     return Math.max(0, videoTime);
   }, [currentFrame, syncData]);
 
-  const syncedVideoTime = calculateSyncedVideoTime();
+  // Only pass syncedTime to VideoPlayer when time was changed manually
+  // During playback, VideoPlayer goes independently without constant updates
+  const syncedVideoTime = wasTimeChangedManually ? calculateSyncedVideoTime() : null;
 
   // Check if current frame is visible based on filter
   const isCurrentFrameVisible = !filterBallInAction || (
@@ -514,10 +517,12 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const handleSliderChange = (e) => {
     setTimeSeconds(parseFloat(e.target.value));
     setIsPlaying(false);
+    setWasTimeChangedManually(true);
   };
 
   const handlePlayToggle = () => {
     setIsPlaying(!isPlaying);
+    setWasTimeChangedManually(false);
   };
 
   // Convert seconds to MM:SS:D format
@@ -555,6 +560,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       setTimeSeconds(maxTime);
     }
     setIsPlaying(false);
+    setWasTimeChangedManually(true);
   };
 
   // Parse timestamp string "HH:MM:SS.D" to total seconds
