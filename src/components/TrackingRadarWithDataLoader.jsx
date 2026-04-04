@@ -525,6 +525,19 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     setWasTimeChangedManually(false);
   };
 
+  // Calculate marker positions for first and second half
+  const getMarkerPositions = () => {
+    const firstHalfSeconds = 0; // First half starts at 0:00
+    const secondHalfSeconds = 45 * 60; // Second half starts at 45:00
+    
+    const firstHalfPercent = (firstHalfSeconds / maxTime) * 100;
+    const secondHalfPercent = (secondHalfSeconds / maxTime) * 100;
+    
+    return { firstHalfPercent, secondHalfPercent };
+  };
+
+  const { firstHalfPercent, secondHalfPercent } = getMarkerPositions();
+
   // Convert seconds to MM:SS:D format
   const formatTimeDisplay = (seconds) => {
     if (!isFinite(seconds) || seconds < 0) return '00:00:0';
@@ -809,85 +822,77 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
           </div>
         </div>
 
-        <div style={styles.framedisplaySection}>
-          <div style={styles.frameDisplay}>
-            Frame #{currentFrame.frameNumber || frameIndex + 1}
-          </div>
-          <div style={styles.frameCountDisplay}>
-            {getDisplayTime()} / {maxTimeDisplay}
-          </div>
-        </div>
-
         <div style={styles.sliderContainer}>
-          <input
-            type="range"
-            min="0"
-            max={maxTime}
-            step={1 / FPS}
-            value={timeSeconds}
-            onChange={handleSliderChange}
-            style={styles.slider}
-          />
+          <div style={styles.sliderWrapper}>
+            <input
+              type="range"
+              min="0"
+              max={maxTime}
+              step={1 / FPS}
+              value={timeSeconds}
+              onChange={handleSliderChange}
+              style={styles.slider}
+            />
+            <div style={styles.timelineMarkers}>
+              <div style={{...styles.marker, left: `${firstHalfPercent}%`}}>
+                <div style={styles.markerLine}></div>
+                <span style={styles.markerLabel}>1st</span>
+              </div>
+              <div style={{...styles.marker, left: `${secondHalfPercent}%`}}>
+                <div style={styles.markerLine}></div>
+                <span style={styles.markerLabel}>2nd</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div style={styles.inputContainer}>
-          <label style={styles.label}>Jump to time:</label>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+        <div style={styles.jumpToTimeContainer}>
+          <div style={styles.jumpHeaderRow}>
+            <label style={styles.label}>Jump to time</label>
+            <div style={styles.jumpSelectHeader}>
               <select
                 value={jumpPeriod}
                 onChange={(e) => setJumpPeriod(parseInt(e.target.value))}
-                style={{
-                  ...styles.input,
-                  width: '70px',
-                  padding: '6px',
-                  cursor: 'pointer',
-                }}
+                style={styles.jumpSelectInput}
               >
-                <option value={1}>1st</option>
-                <option value={2}>2nd</option>
+                <option value={1}>1st Half</option>
+                <option value={2}>2nd Half</option>
               </select>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          </div>
+          <div style={styles.jumpInputGrid}>
+            <div style={styles.jumpTimeInputs}>
               <input
                 type="number"
                 min="0"
                 max={Math.floor(maxTime / 60)}
-                value={jumpMinutes}
+                value={jumpMinutes || ''}
                 onChange={(e) => setJumpMinutes(Math.max(0, parseInt(e.target.value) || 0))}
                 style={{
-                  ...styles.input,
-                  width: '60px',
+                  ...styles.jumpInput,
+                  color: jumpMinutes ? '#000' : '#999'
                 }}
-                placeholder="MM"
+                placeholder="00"
               />
-              <span>min</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <span style={styles.timeSeparator}>:</span>
               <input
                 type="number"
                 min="0"
                 max="59"
-                value={String(jumpSeconds).padStart(2, '0')}
+                value={jumpSeconds ? String(jumpSeconds).padStart(2, '0') : ''}
                 onChange={(e) => setJumpSeconds(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
                 style={{
-                  ...styles.input,
-                  width: '60px',
+                  ...styles.jumpInput,
+                  color: jumpSeconds ? '#000' : '#999'
                 }}
-                placeholder="SS"
+                placeholder="00"
               />
-              <span>sec</span>
             </div>
             <button
               onClick={handleJumpToTime}
-              style={{
-                ...styles.button,
-                backgroundColor: '#4a90e2',
-                fontSize: '12px',
-                padding: '8px 12px',
-              }}
+              style={styles.jumpButton}
             >
-              Jump
+              Go
             </button>
           </div>
         </div>
@@ -901,26 +906,6 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
         >
           {isPlaying ? '⏸ Pause' : '▶ Play'}
         </button>
-
-        <div style={styles.filterContainer}>
-          <label style={styles.checkboxLabel}>
-            <input
-              type="checkbox"
-              checked={filterBallInAction}
-              onChange={(e) => {
-                setFilterBallInAction(e.target.checked);
-                setIsPlaying(false);
-              }}
-              style={styles.checkbox}
-            />
-            <span>Show only ball in action</span>
-          </label>
-          {filterBallInAction && (
-            <div style={styles.filterInfo}>
-              Filtered: {filteredFramesCount} / {trackingData.length} frames
-            </div>
-          )}
-        </div>
 
         <div style={styles.legend}>
           <div style={styles.legendItem}>
@@ -1119,51 +1104,27 @@ const styles = {
     fontWeight: '700',
     fontSize: '14px',
   },
-  framedisplaySection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  frameDisplay: {
-    textAlign: 'center',
-    fontSize: '14px',
-    color: '#333',
-    padding: '8px',
-    backgroundColor: '#e8f4f8',
-    borderRadius: '4px',
-    fontWeight: '600',
-    borderLeft: '4px solid #1e90ff',
-  },
-  frameCountDisplay: {
-    textAlign: 'center',
-    fontSize: '12px',
-    color: '#999',
-    padding: '6px',
-  },
   sliderContainer: {
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
+    gap: '20px',
+  },
+  sliderWrapper: {
+    position: 'relative',
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
   },
   slider: {
     width: '100%',
     cursor: 'pointer',
   },
-  inputContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
   label: {
     fontSize: '12px',
     fontWeight: '600',
     color: '#666',
-  },
-  input: {
-    padding: '8px',
-    border: '1px solid #ddd',
-    borderRadius: '4px',
-    fontSize: '13px',
-    fontFamily: 'monospace',
   },
   button: {
     padding: '10px 16px',
@@ -1174,34 +1135,6 @@ const styles = {
     color: 'white',
     cursor: 'pointer',
     transition: 'all 0.2s',
-  },
-  filterContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    padding: '12px',
-    backgroundColor: '#f0f8ff',
-    borderRadius: '6px',
-    borderLeft: '4px solid #ff6b6b',
-  },
-  checkboxLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '13px',
-    color: '#333',
-    fontWeight: '500',
-    cursor: 'pointer',
-  },
-  checkbox: {
-    cursor: 'pointer',
-    width: '16px',
-    height: '16px',
-  },
-  filterInfo: {
-    fontSize: '11px',
-    color: '#999',
-    paddingLeft: '24px',
   },
   legend: {
     padding: '12px',
@@ -1244,6 +1177,101 @@ const styles = {
   hint: {
     fontSize: '12px',
     color: '#999',
+  },
+  timelineMarkers: {
+    position: 'relative',
+    width: '100%',
+    height: '30px',
+  },
+  marker: {
+    position: 'absolute',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '4px',
+    transform: 'translateX(-50%)',
+    top: '0',
+  },
+  markerLine: {
+    width: '2px',
+    height: '12px',
+    backgroundColor: '#1e90ff',
+  },
+  markerLabel: {
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+  },
+  jumpToTimeContainer: {
+    padding: '16px',
+    backgroundColor: '#f0f8ff',
+    border: '2px solid #1e90ff',
+    borderRadius: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  jumpHeaderRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  jumpSelectHeader: {
+    width: '120px',
+  },
+  jumpInputGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr auto',
+    gap: '10px',
+    alignItems: 'center',
+  },
+  jumpSelectInput: {
+    width: '100%',
+    padding: '8px',
+    border: '1px solid #ccc',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    backgroundColor: 'white',
+  },
+  jumpTimeInputs: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '4px',
+    flex: 1,
+  },
+  jumpInput: {
+    width: '55px',
+    padding: '8px',
+    border: '1px solid #ccc',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontWeight: '600',
+    textAlign: 'center',
+    fontFamily: 'monospace',
+  },
+  jumpInputPlaceholder: {
+    color: 'rgba(0, 0, 0, 0.3)',
+  },
+  timeSeparator: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  jumpButton: {
+    padding: '8px 16px',
+    backgroundColor: '#1e90ff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    whiteSpace: 'nowrap',
   },
 };
 
