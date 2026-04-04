@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import VideoPlayer from './VideoPlayer';
 
 /**
  * Hook to load match metadata (colors, teams, players)
@@ -635,11 +636,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       <div style={styles.leftPanel}>
         {/* Top Row */}
         <div style={styles.quadrantRow}>
-          {/* Top Left - Empty */}
+          {/* Top Left - Video Player */}
           <div style={styles.quadrant}>
-            <div style={styles.emptyQuadrant}>
-              <p style={styles.emptyText}>Quadrante Vuoto</p>
-            </div>
+            <VideoPlayer />
           </div>
           
           {/* Top Right - Radar */}

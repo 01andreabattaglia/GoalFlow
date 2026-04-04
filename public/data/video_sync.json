@@ -1,0 +1,13 @@
+{
+  "video_file": "Isuzu UTE A-League 2024-25 - Round 6 - Auckland FC v Newcastle Jets.mp4",
+  "sync_points": {
+    "first_half_start": 281,
+    "second_half_start": 4011,
+    "first_half_duration": 3730
+  },
+  "input_format": "mm:ss",
+  "timestamps": {
+    "first_half_start_display": "04:41",
+    "second_half_start_display": "66:51"
+  }
+}
