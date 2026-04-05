@@ -6,8 +6,6 @@ const VideoPlayer = ({
   shouldPlay = false,
 }) => {
   const videoRef = useRef(null);
-  const lastSyncTimeRef = useRef(null);
-  const hasInitializedRef = useRef(false);
 
   // Sync play/pause command from radar - start/stop playback
   useEffect(() => {
@@ -24,20 +22,15 @@ const VideoPlayer = ({
     }
   }, [shouldPlay]);
 
-  // Only sync video time when there's a significant jump (> 0.5 seconds)
-  // This avoids constant updates that cause lag during normal playback
+  // Sync only when target differs from actual current time to avoid unnecessary seeks.
+  // This also fixes repeated jumps to the same target time after the video has advanced.
   useEffect(() => {
     if (syncedTime !== null && videoRef.current && isFinite(syncedTime)) {
-      // Check if this is a significant jump or initial sync
-      const timeDiff = lastSyncTimeRef.current !== null 
-        ? Math.abs(syncedTime - lastSyncTimeRef.current)
-        : Infinity;
+      const currentVideoTime = videoRef.current.currentTime || 0;
+      const timeDiff = Math.abs(currentVideoTime - syncedTime);
 
-      // Sync on: initial sync, or jump > 0.5 seconds
-      if (!hasInitializedRef.current || timeDiff > 0.5) {
+      if (timeDiff > 0.15) {
         videoRef.current.currentTime = syncedTime;
-        lastSyncTimeRef.current = syncedTime;
-        hasInitializedRef.current = true;
       }
     }
   }, [syncedTime]);
