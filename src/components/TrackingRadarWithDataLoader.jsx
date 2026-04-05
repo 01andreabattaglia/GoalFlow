@@ -810,15 +810,15 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       <div style={styles.controlsSection}>
         <h2 style={styles.title}>Football Tracking Radar</h2>
 
-        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '16px', backgroundColor: '#f9f9f9', borderRadius: '8px', marginBottom: '16px', borderLeft: '4px solid #1e90ff'}}>
+        <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '16px', backgroundColor: '#f9f9f9', borderRadius: '8px', marginBottom: '16px', borderLeft: '4px solid #7E6AE0'}}>
           <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
             <span style={{fontSize: '12px', color: '#999', fontWeight: '600', textTransform: 'uppercase'}}>Period</span>
-            <span style={{fontSize: '24px', fontWeight: 'bold', color: '#1e90ff'}}>{currentFrame.period || '-'}</span>
+            <span style={{fontSize: '24px', fontWeight: 'bold', color: '#7E6AE0'}}>{currentFrame.period || '-'}</span>
           </div>
 
           <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
             <span style={{fontSize: '12px', color: '#999', fontWeight: '600', textTransform: 'uppercase'}}>Time</span>
-            <span style={{fontSize: '24px', fontWeight: 'bold', color: '#1e90ff', fontFamily: 'monospace'}}>{getMatchTime()}</span>
+            <span style={{fontSize: '24px', fontWeight: 'bold', color: '#7E6AE0', fontFamily: 'monospace'}}>{getMatchTime()}</span>
           </div>
         </div>
 
@@ -932,7 +932,7 @@ const styles = {
     display: 'flex',
     gap: '20px',
     padding: '20px',
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#C7CEF8',
     minHeight: '100vh',
     fontFamily: 'system-ui, -apple-system, sans-serif',
     height: '100%',
@@ -1081,7 +1081,7 @@ const styles = {
     color: '#666',
   },
   timeValue: {
-    color: '#1e90ff',
+    color: '#7E6AE0',
     fontWeight: '700',
     fontFamily: 'monospace',
     fontSize: '16px',
@@ -1120,6 +1120,7 @@ const styles = {
   slider: {
     width: '100%',
     cursor: 'pointer',
+    accentColor: '#7E6AE0',
   },
   label: {
     fontSize: '12px',
@@ -1195,7 +1196,7 @@ const styles = {
   markerLine: {
     width: '2px',
     height: '12px',
-    backgroundColor: '#1e90ff',
+    backgroundColor: '#7E6AE0',
   },
   markerLabel: {
     fontSize: '11px',
@@ -1205,8 +1206,8 @@ const styles = {
   },
   jumpToTimeContainer: {
     padding: '16px',
-    backgroundColor: '#f0f8ff',
-    border: '2px solid #1e90ff',
+    backgroundColor: '#D3D7E3',
+    border: '2px solid #7E6AE0',
     borderRadius: '8px',
     display: 'flex',
     flexDirection: 'column',
@@ -1263,7 +1264,7 @@ const styles = {
   },
   jumpButton: {
     padding: '8px 16px',
-    backgroundColor: '#1e90ff',
+    backgroundColor: '#7E6AE0',
     color: 'white',
     border: 'none',
     borderRadius: '6px',
