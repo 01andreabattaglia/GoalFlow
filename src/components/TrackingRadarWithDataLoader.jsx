@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import VideoPlayer from './VideoPlayer';
 
 /**
@@ -163,6 +163,49 @@ const useEnrichedTrackingData = (filePath) => {
 };
 
 /**
+ * Hook to load pitch control frames from JSONL.
+ */
+const usePitchControlData = (filePath) => {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+
+        const lines = text.trim().split('\n').filter((line) => line.trim().length > 0);
+        const frames = lines
+          .map((line, idx) => {
+            try {
+              return JSON.parse(line);
+            } catch (e) {
+              console.warn(`Failed to parse pitch control JSONL line ${idx}:`, e);
+              return null;
+            }
+          })
+          .filter((f) => f !== null);
+
+        setData(frames);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error loading pitch control data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [filePath]);
+
+  return { data, loading, error };
+};
+
+/**
  * Generate mock data with realistic dimensions (104m x 68m)
  */
 const generateMockData = (frameCount = 250) => {
@@ -258,11 +301,76 @@ const normalizedToPixels = (normX, normY, width, height) => {
   return [x * width, (1 - y) * height];
 };
 
+const decodeControlRleRows = (rleRows, widthCells, heightCells) => {
+  if (!Array.isArray(rleRows) || widthCells <= 0 || heightCells <= 0) return [];
+
+  const matrix = [];
+  for (let rowIdx = 0; rowIdx < Math.min(heightCells, rleRows.length); rowIdx++) {
+    const rowEncoding = rleRows[rowIdx];
+    const row = [];
+
+    if (Array.isArray(rowEncoding)) {
+      rowEncoding.forEach((pair) => {
+        if (!Array.isArray(pair) || pair.length < 2) return;
+        const value = Number(pair[0]) || 0;
+        const count = Math.max(0, Number(pair[1]) || 0);
+        for (let i = 0; i < count; i++) row.push(value);
+      });
+    }
+
+    if (row.length < widthCells) {
+      const padCount = widthCells - row.length;
+      for (let i = 0; i < padCount; i++) row.push(0);
+    }
+
+    matrix.push(row.slice(0, widthCells));
+  }
+
+  while (matrix.length < heightCells) {
+    matrix.push(Array.from({ length: widthCells }, () => 0));
+  }
+
+  return matrix;
+};
+
+const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height) => {
+  if (!pitchControlFrame) return;
+
+  const widthCells = pitchControlFrame.grid?.width_cells;
+  const heightCells = pitchControlFrame.grid?.height_cells;
+  const rleRows = pitchControlFrame.control_rle_rows;
+
+  if (!widthCells || !heightCells || !Array.isArray(rleRows)) return;
+
+  const controlMatrix = decodeControlRleRows(rleRows, widthCells, heightCells);
+  if (!controlMatrix.length) return;
+
+  const cellW = width / widthCells;
+  const cellH = height / heightCells;
+
+  for (let row = 0; row < heightCells; row++) {
+    const rowData = controlMatrix[row];
+    for (let col = 0; col < widthCells; col++) {
+      const value = rowData[col];
+      if (value === 1) {
+        ctx.fillStyle = 'rgba(30, 144, 255, 0.22)';
+      } else if (value === -1) {
+        ctx.fillStyle = 'rgba(255, 68, 68, 0.22)';
+      } else {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+      }
+
+      ctx.fillRect(col * cellW, row * cellH, cellW, cellH);
+    }
+  }
+};
+
 // ========= MAIN COMPONENT =========
 const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const canvasRef = useRef(null);
   const [timeSeconds, setTimeSeconds] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [selectedDashboard, setSelectedDashboard] = useState('physical');
   const [filterBallInAction, setFilterBallInAction] = useState(false);
   const [jumpMinutes, setJumpMinutes] = useState(0);
   const [jumpSeconds, setJumpSeconds] = useState(0);
@@ -275,6 +383,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Load enriched tracking data
   const { data: enrichedTrackingData } = useEnrichedTrackingData('/data/1886347_enriched_tracking.jsonl');
+
+  // Load pitch control data
+  const { data: pitchControlData } = usePitchControlData('/data/1886347_pitch_control.jsonl');
 
   // Load video sync data
   const { syncData } = useVideoSyncData('/data/video_sync.json');
@@ -347,6 +458,30 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     player_data: [],
     ball_data: { x: null, y: null, is_detected: false },
   };
+
+  // Find closest pitch control frame to current tracking frame.
+  const currentPitchControlFrame = useMemo(() => {
+    if (!pitchControlData || pitchControlData.length === 0) return null;
+
+    const currentTrackingFrame = currentFrame.frameNumber ?? currentFrame.frame;
+    if (currentTrackingFrame === undefined || currentTrackingFrame === null) {
+      return pitchControlData[0];
+    }
+
+    let best = pitchControlData[0];
+    let bestDiff = Math.abs((best.frame ?? 0) - currentTrackingFrame);
+
+    for (let i = 1; i < pitchControlData.length; i++) {
+      const candidate = pitchControlData[i];
+      const diff = Math.abs((candidate.frame ?? 0) - currentTrackingFrame);
+      if (diff < bestDiff) {
+        best = candidate;
+        bestDiff = diff;
+      }
+    }
+
+    return best;
+  }, [pitchControlData, currentFrame]);
 
   // Calculate synchronized video time from radar timestamp
   const calculateSyncedVideoTime = useCallback(() => {
@@ -439,6 +574,11 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     // Draw pitch
     drawPitch(ctx, CANVAS_WIDTH, canvasHeight);
 
+    // In Pitch Control dashboard, render controlled zones as background overlay.
+    if (selectedDashboard === 'pitch-control') {
+      drawPitchControlOverlay(ctx, currentPitchControlFrame, CANVAS_WIDTH, canvasHeight);
+    }
+
     // Draw players
     const players = currentFrame.player_data || [];
     players.forEach((player) => {
@@ -483,7 +623,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     }
-  }, [currentFrame, playerMeta, teamInfo, canvasHeight]);
+  }, [currentFrame, playerMeta, teamInfo, canvasHeight, selectedDashboard, currentPitchControlFrame]);
 
   // Redraw on frame change
   useEffect(() => {
@@ -712,98 +852,100 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     <div style={styles.container}>
       {/* Left Panel - Grid Layout */}
       <div style={styles.leftPanel}>
-        {/* Top Row */}
-        <div style={styles.quadrantRow}>
-          {/* Top Left - Video Player */}
-          <div style={styles.quadrant}>
-            <VideoPlayer syncedTime={syncedVideoTime} shouldPlay={isPlaying} />
-          </div>
-          
-          {/* Top Right - Radar */}
-          <div style={styles.quadrant}>
-            <div style={styles.radarContainer}>
-              <canvas
-                ref={canvasRef}
-                width={CANVAS_WIDTH}
-                height={canvasHeight}
-                style={styles.canvas}
-              />
+        <>
+          {/* Top Row */}
+          <div style={styles.quadrantRow}>
+            {/* Top Left - Video Player */}
+            <div style={styles.quadrant}>
+              <VideoPlayer syncedTime={syncedVideoTime} shouldPlay={isPlaying} />
+            </div>
+            
+            {/* Top Right - Radar */}
+            <div style={styles.quadrant}>
+              <div style={styles.radarContainer}>
+                <canvas
+                  ref={canvasRef}
+                  width={CANVAS_WIDTH}
+                  height={canvasHeight}
+                  style={styles.canvas}
+                />
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Bottom Row - Full Width Table */}
-        <div style={styles.bottomRow}>
-          <div style={styles.tableContainer}>
-            <div style={styles.tableWrapper}>
-              <table style={styles.table}>
-                <thead>
-                  <tr style={styles.tableHeader}>
-                    <th style={styles.tableHeaderCell}>Stato</th>
-                    <th style={styles.tableHeaderCell}>#</th>
-                    <th style={styles.tableHeaderCell}>Nome</th>
-                    <th style={styles.tableHeaderCell}>Ruolo</th>
-                    <th style={styles.tableHeaderCell}>Min Giocati</th>
-                    <th style={styles.tableHeaderCell}>Distanza (km)</th>
-                    <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
-                    <th style={styles.tableHeaderCell}>Sprinting (min)</th>
-                    <th style={styles.tableHeaderCell}>Jogging (min)</th>
-                    <th style={styles.tableHeaderCell}>Walking (min)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
-                    if (!player) return null;
-                    return (
-                    <tr key={idx} style={styles.tableRow}>
-                      <td style={{
-                        ...styles.tableCell,
-                        backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
-                        fontWeight: 'bold',
-                      }}>
-                        {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
-                      </td>
-                      <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                        <div
-                          style={{
-                            width: '28px',
-                            height: '28px',
-                            borderRadius: '50%',
-                            backgroundColor: player.jersey_color || '#000000',
-                            border: '2px solid #333',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            color: player.number_color || '#ffffff',
-                            fontWeight: 'bold',
-                            fontSize: '13px',
-                          }}
-                        >
-                          {player.number}
-                        </div>
-                      </td>
-                      <td style={styles.tableCell}>{player.name || 'N/A'}</td>
-                      <td style={styles.tableCell}>{player.role || 'N/A'}</td>
-                      <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
-                      <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
-                      <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
-                      <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
-                      <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
-                      <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
+          {/* Bottom Row - Full Width Table */}
+          <div style={styles.bottomRow}>
+            <div style={styles.tableContainer}>
+              <div style={styles.tableWrapper}>
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeader}>
+                      <th style={styles.tableHeaderCell}>Stato</th>
+                      <th style={styles.tableHeaderCell}>#</th>
+                      <th style={styles.tableHeaderCell}>Nome</th>
+                      <th style={styles.tableHeaderCell}>Ruolo</th>
+                      <th style={styles.tableHeaderCell}>Min Giocati</th>
+                      <th style={styles.tableHeaderCell}>Distanza (km)</th>
+                      <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
+                      <th style={styles.tableHeaderCell}>Sprinting (min)</th>
+                      <th style={styles.tableHeaderCell}>Jogging (min)</th>
+                      <th style={styles.tableHeaderCell}>Walking (min)</th>
                     </tr>
-                    );
-                  }) : (
-                    <tr>
-                      <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
-                        Caricamento dati...
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
+                      if (!player) return null;
+                      return (
+                      <tr key={idx} style={styles.tableRow}>
+                        <td style={{
+                          ...styles.tableCell,
+                          backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
+                          fontWeight: 'bold',
+                        }}>
+                          {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
+                        </td>
+                        <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                          <div
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              borderRadius: '50%',
+                              backgroundColor: player.jersey_color || '#000000',
+                              border: '2px solid #333',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: player.number_color || '#ffffff',
+                              fontWeight: 'bold',
+                              fontSize: '13px',
+                            }}
+                          >
+                            {player.number}
+                          </div>
+                        </td>
+                        <td style={styles.tableCell}>{player.name || 'N/A'}</td>
+                        <td style={styles.tableCell}>{player.role || 'N/A'}</td>
+                        <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
+                        <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
+                        <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
+                        <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
+                        <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
+                        <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
+                      </tr>
+                      );
+                    }) : (
+                      <tr>
+                        <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
+                          Caricamento dati...
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
+        </>
       </div>
 
       {/* Controls - Right Panel */}
@@ -919,6 +1061,30 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
           <div style={styles.legendItem}>
             <div style={{ ...styles.legendDot, backgroundColor: '#ffff00', border: '1px solid black' }} />
             <span>Ball</span>
+          </div>
+        </div>
+
+        <div style={styles.dashboardModeContainer}>
+          <span style={styles.dashboardModeTitle}>Dashboard View</span>
+          <div style={styles.dashboardModeButtons}>
+            <button
+              onClick={() => setSelectedDashboard('physical')}
+              style={{
+                ...styles.dashboardModeButton,
+                ...(selectedDashboard === 'physical' ? styles.dashboardModeButtonActive : {}),
+              }}
+            >
+              Physical
+            </button>
+            <button
+              onClick={() => setSelectedDashboard('pitch-control')}
+              style={{
+                ...styles.dashboardModeButton,
+                ...(selectedDashboard === 'pitch-control' ? styles.dashboardModeButtonActive : {}),
+              }}
+            >
+              Pitch Control
+            </button>
           </div>
         </div>
       </div>
@@ -1273,6 +1439,41 @@ const styles = {
     cursor: 'pointer',
     transition: 'all 0.2s',
     whiteSpace: 'nowrap',
+  },
+  dashboardModeContainer: {
+    padding: '12px',
+    borderRadius: '8px',
+    backgroundColor: '#f9f9f9',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  dashboardModeTitle: {
+    fontSize: '12px',
+    fontWeight: '700',
+    color: '#666',
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
+  },
+  dashboardModeButtons: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '8px',
+  },
+  dashboardModeButton: {
+    padding: '8px 10px',
+    borderRadius: '6px',
+    border: '1px solid #cfd3dc',
+    backgroundColor: 'white',
+    color: '#444',
+    fontSize: '12px',
+    fontWeight: '600',
+    cursor: 'pointer',
+  },
+  dashboardModeButtonActive: {
+    backgroundColor: '#7E6AE0',
+    border: '1px solid #7E6AE0',
+    color: 'white',
   },
 };
 
