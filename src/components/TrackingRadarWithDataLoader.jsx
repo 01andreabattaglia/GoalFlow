@@ -333,12 +333,37 @@ const decodeControlRleRows = (rleRows, widthCells, heightCells) => {
   return matrix;
 };
 
+const inferGridSizeFromRleRows = (rleRows) => {
+  if (!Array.isArray(rleRows) || rleRows.length === 0) {
+    return { widthCells: 0, heightCells: 0 };
+  }
+
+  const heightCells = rleRows.length;
+  let widthCells = 0;
+
+  rleRows.forEach((rowEncoding) => {
+    if (!Array.isArray(rowEncoding)) return;
+    const rowWidth = rowEncoding.reduce((sum, pair) => {
+      if (!Array.isArray(pair) || pair.length < 2) return sum;
+      return sum + Math.max(0, Number(pair[1]) || 0);
+    }, 0);
+    if (rowWidth > widthCells) widthCells = rowWidth;
+  });
+
+  return { widthCells, heightCells };
+};
+
 const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height) => {
   if (!pitchControlFrame) return;
 
-  const widthCells = pitchControlFrame.grid?.width_cells;
-  const heightCells = pitchControlFrame.grid?.height_cells;
   const rleRows = pitchControlFrame.control_rle_rows;
+
+  const gridWidthFromMeta = pitchControlFrame.grid?.width_cells;
+  const gridHeightFromMeta = pitchControlFrame.grid?.height_cells;
+
+  const inferredGrid = inferGridSizeFromRleRows(rleRows);
+  const widthCells = gridWidthFromMeta || inferredGrid.widthCells;
+  const heightCells = gridHeightFromMeta || inferredGrid.heightCells;
 
   if (!widthCells || !heightCells || !Array.isArray(rleRows)) return;
 
