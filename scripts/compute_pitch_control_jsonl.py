@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--player-accel", type=float, default=2.5, help="Fallback player acceleration")
 	parser.add_argument("--player-vmax", type=float, default=7.0, help="Fallback player max speed")
 	parser.add_argument("--s-ball", type=float, default=18.0, help="Ball speed used in tb formula")
-	parser.add_argument("--eps", type=float, default=0.5, help="Tie-break epsilon in seconds")
+	parser.add_argument("--eps", type=float, default=0.3, help="Tie-break epsilon in seconds")
 	parser.add_argument("--max-frames", type=int, default=0, help="Optional output cap (0 = no cap)")
 	return parser.parse_args()
 
@@ -371,7 +371,7 @@ def main() -> None:
 	print(f"Home team: {match['home_team']['name']} (ID: {home_team_id})")
 	print(f"Away team: {match['away_team']['name']} (ID: {away_team_id})")
 	print(f"Pitch dimensions: {match['pitch_length']}m x {match['pitch_width']}m")
-	print("Using formulas with s_ball=18 m/s and eps=0.5 s by default.")
+	print("Using formulas with s_ball=18 m/s and eps=0.3 s by default.")
 	print(f"Processing tracking data from {tracking_path}...")
 
 	process_tracking_file(

@@ -375,6 +375,7 @@ const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height) => {
 
   for (let row = 0; row < heightCells; row++) {
     const rowData = controlMatrix[row];
+    const drawRow = heightCells - 1 - row;
     for (let col = 0; col < widthCells; col++) {
       const value = rowData[col];
       if (value === 1) {
@@ -385,7 +386,7 @@ const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height) => {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
       }
 
-      ctx.fillRect(col * cellW, row * cellH, cellW, cellH);
+      ctx.fillRect(col * cellW, drawRow * cellH, cellW, cellH);
     }
   }
 };
