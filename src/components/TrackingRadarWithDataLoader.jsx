@@ -353,7 +353,23 @@ const inferGridSizeFromRleRows = (rleRows) => {
   return { widthCells, heightCells };
 };
 
-const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height) => {
+const toRgba = (hex, alpha) => {
+  if (typeof hex !== 'string' || !hex.startsWith('#')) return hex;
+
+  const raw = hex.slice(1);
+  const full = raw.length === 3
+    ? raw.split('').map((c) => c + c).join('')
+    : raw;
+
+  if (full.length !== 6) return hex;
+
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height, controlColors) => {
   if (!pitchControlFrame) return;
 
   const rleRows = pitchControlFrame.control_rle_rows;
@@ -379,11 +395,11 @@ const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height) => {
     for (let col = 0; col < widthCells; col++) {
       const value = rowData[col];
       if (value === 1) {
-        ctx.fillStyle = 'rgba(30, 144, 255, 0.22)';
+        ctx.fillStyle = toRgba(controlColors.home, 0.22);
       } else if (value === -1) {
-        ctx.fillStyle = 'rgba(255, 68, 68, 0.22)';
+        ctx.fillStyle = toRgba(controlColors.away, 0.22);
       } else {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.fillStyle = toRgba(controlColors.neutral, 0.22);
       }
 
       ctx.fillRect(col * cellW, drawRow * cellH, cellW, cellH);
@@ -397,6 +413,12 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const [timeSeconds, setTimeSeconds] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedDashboard, setSelectedDashboard] = useState('physical');
+  const [pitchControlColors, setPitchControlColors] = useState({
+    home: '#1e90ff',
+    away: '#ff4444',
+    neutral: '#d7dce8',
+  });
+  const [hasCustomPitchColors, setHasCustomPitchColors] = useState(false);
   const [filterBallInAction, setFilterBallInAction] = useState(false);
   const [jumpMinutes, setJumpMinutes] = useState(0);
   const [jumpSeconds, setJumpSeconds] = useState(0);
@@ -471,6 +493,15 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   const teamInfo = getTeamInfo();
   const playerMeta = getPlayerMeta();
+
+  useEffect(() => {
+    if (hasCustomPitchColors) return;
+    setPitchControlColors((prev) => ({
+      ...prev,
+      home: teamInfo.home_jersey || prev.home,
+      away: teamInfo.away_jersey || prev.away,
+    }));
+  }, [teamInfo.home_jersey, teamInfo.away_jersey, hasCustomPitchColors]);
 
   // Use TOTAL trackingData for frame indexing, independent of filter
   const totalFrames = trackingData.length;
@@ -602,7 +633,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     // In Pitch Control dashboard, render controlled zones as background overlay.
     if (selectedDashboard === 'pitch-control') {
-      drawPitchControlOverlay(ctx, currentPitchControlFrame, CANVAS_WIDTH, canvasHeight);
+      drawPitchControlOverlay(ctx, currentPitchControlFrame, CANVAS_WIDTH, canvasHeight, pitchControlColors);
     }
 
     // Draw players
@@ -649,7 +680,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     }
-  }, [currentFrame, playerMeta, teamInfo, canvasHeight, selectedDashboard, currentPitchControlFrame]);
+  }, [currentFrame, playerMeta, teamInfo, canvasHeight, selectedDashboard, currentPitchControlFrame, pitchControlColors]);
 
   // Redraw on frame change
   useEffect(() => {
@@ -976,7 +1007,13 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
       {/* Controls - Right Panel */}
       <div style={styles.controlsSection}>
-        <h2 style={styles.title}>Football Tracking Radar</h2>
+        <div style={styles.logoHeader}>
+          <img
+            src="/images/goalflow-logo.jpg"
+            alt="GoalFlow"
+            style={styles.logoImage}
+          />
+        </div>
 
         <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', padding: '16px', backgroundColor: '#f9f9f9', borderRadius: '8px', marginBottom: '16px', borderLeft: '4px solid #7E6AE0'}}>
           <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
@@ -1075,21 +1112,6 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
           {isPlaying ? '⏸ Pause' : '▶ Play'}
         </button>
 
-        <div style={styles.legend}>
-          <div style={styles.legendItem}>
-            <div style={{ ...styles.legendDot, backgroundColor: teamInfo.home_jersey }} />
-            <span>{matchData?.home_team?.name || 'Home'}</span>
-          </div>
-          <div style={styles.legendItem}>
-            <div style={{ ...styles.legendDot, backgroundColor: teamInfo.away_jersey }} />
-            <span>{matchData?.away_team?.name || 'Away'}</span>
-          </div>
-          <div style={styles.legendItem}>
-            <div style={{ ...styles.legendDot, backgroundColor: '#ffff00', border: '1px solid black' }} />
-            <span>Ball</span>
-          </div>
-        </div>
-
         <div style={styles.dashboardModeContainer}>
           <span style={styles.dashboardModeTitle}>Dashboard View</span>
           <div style={styles.dashboardModeButtons}>
@@ -1112,6 +1134,72 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
               Pitch Control
             </button>
           </div>
+
+          {selectedDashboard === 'pitch-control' && (
+            <div style={styles.pitchLegendPanel}>
+              <span style={styles.pitchLegendTitle}>Legenda Aree</span>
+
+              <div style={styles.pitchLegendRow}>
+                <div
+                  style={{
+                    ...styles.pitchLegendSwatch,
+                    backgroundColor: toRgba(pitchControlColors.home, 0.22),
+                    borderColor: pitchControlColors.home,
+                  }}
+                />
+                <span style={styles.pitchLegendLabel}>{matchData?.home_team?.name || 'Home'}</span>
+                <input
+                  type="color"
+                  value={pitchControlColors.home}
+                  onChange={(e) => {
+                    setHasCustomPitchColors(true);
+                    setPitchControlColors((prev) => ({ ...prev, home: e.target.value }));
+                  }}
+                  style={styles.pitchLegendColorInput}
+                />
+              </div>
+
+              <div style={styles.pitchLegendRow}>
+                <div
+                  style={{
+                    ...styles.pitchLegendSwatch,
+                    backgroundColor: toRgba(pitchControlColors.away, 0.22),
+                    borderColor: pitchControlColors.away,
+                  }}
+                />
+                <span style={styles.pitchLegendLabel}>{matchData?.away_team?.name || 'Away'}</span>
+                <input
+                  type="color"
+                  value={pitchControlColors.away}
+                  onChange={(e) => {
+                    setHasCustomPitchColors(true);
+                    setPitchControlColors((prev) => ({ ...prev, away: e.target.value }));
+                  }}
+                  style={styles.pitchLegendColorInput}
+                />
+              </div>
+
+              <div style={styles.pitchLegendRow}>
+                <div
+                  style={{
+                    ...styles.pitchLegendSwatch,
+                    backgroundColor: toRgba(pitchControlColors.neutral, 0.22),
+                    borderColor: pitchControlColors.neutral,
+                  }}
+                />
+                <span style={styles.pitchLegendLabel}>Zona Neutra</span>
+                <input
+                  type="color"
+                  value={pitchControlColors.neutral}
+                  onChange={(e) => {
+                    setHasCustomPitchColors(true);
+                    setPitchControlColors((prev) => ({ ...prev, neutral: e.target.value }));
+                  }}
+                  style={styles.pitchLegendColorInput}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1259,6 +1347,19 @@ const styles = {
     fontSize: '18px',
     fontWeight: '600',
     color: '#333',
+  },
+  logoHeader: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: '0 0 8px 0',
+  },
+  logoImage: {
+    width: '100%',
+    maxWidth: '210px',
+    height: 'auto',
+    objectFit: 'contain',
+    display: 'block',
   },
   timeDisplay: {
     display: 'flex',
@@ -1500,6 +1601,48 @@ const styles = {
     backgroundColor: '#7E6AE0',
     border: '1px solid #7E6AE0',
     color: 'white',
+  },
+  pitchLegendPanel: {
+    marginTop: '4px',
+    padding: '10px',
+    borderRadius: '8px',
+    backgroundColor: '#eef1fa',
+    border: '1px solid #d3d9ed',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  pitchLegendTitle: {
+    fontSize: '12px',
+    fontWeight: '700',
+    color: '#4f5b7a',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
+  pitchLegendRow: {
+    display: 'grid',
+    gridTemplateColumns: '16px 1fr auto',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  pitchLegendSwatch: {
+    width: '14px',
+    height: '14px',
+    borderRadius: '4px',
+    border: '1px solid #cfd3dc',
+  },
+  pitchLegendLabel: {
+    fontSize: '12px',
+    color: '#333',
+    fontWeight: '600',
+  },
+  pitchLegendColorInput: {
+    width: '28px',
+    height: '22px',
+    padding: 0,
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
   },
 };
 
