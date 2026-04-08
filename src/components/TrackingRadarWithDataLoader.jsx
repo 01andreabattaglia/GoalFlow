@@ -722,6 +722,51 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     setWasTimeChangedManually(false);
   };
 
+  const stepFrame = useCallback((direction) => {
+    const maxFrameIndex = Math.max(0, totalFrames - 1);
+
+    setIsPlaying(false);
+    setWasTimeChangedManually(true);
+    setTimeSeconds((prev) => {
+      const currentIndex = Math.min(Math.floor(prev * FPS), maxFrameIndex);
+      const nextIndex = Math.max(0, Math.min(maxFrameIndex, currentIndex + direction));
+      return nextIndex / FPS;
+    });
+  }, [totalFrames]);
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target) return false;
+
+      const tagName = target.tagName?.toLowerCase();
+      return (
+        target.isContentEditable ||
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        tagName === 'select'
+      );
+    };
+
+    const handleKeyDown = (event) => {
+      if (isEditableTarget(event.target)) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        setIsPlaying((prev) => !prev);
+        setWasTimeChangedManually(false);
+      } else if (event.code === 'ArrowLeft') {
+        event.preventDefault();
+        stepFrame(-1);
+      } else if (event.code === 'ArrowRight') {
+        event.preventDefault();
+        stepFrame(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [stepFrame]);
+
   // Calculate marker positions for first and second half
   const getMarkerPositions = () => {
     const firstHalfSeconds = 0; // First half starts at 0:00
@@ -1027,25 +1072,38 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
           </div>
         </div>
 
-        <div style={styles.sliderContainer}>
-          <div style={styles.sliderWrapper}>
-            <input
-              type="range"
-              min="0"
-              max={maxTime}
-              step={1 / FPS}
-              value={timeSeconds}
-              onChange={handleSliderChange}
-              style={styles.slider}
-            />
-            <div style={styles.timelineMarkers}>
-              <div style={{...styles.marker, left: `${firstHalfPercent}%`}}>
-                <div style={styles.markerLine}></div>
-                <span style={styles.markerLabel}>1st</span>
-              </div>
-              <div style={{...styles.marker, left: `${secondHalfPercent}%`}}>
-                <div style={styles.markerLine}></div>
-                <span style={styles.markerLabel}>2nd</span>
+        <div style={styles.playbackControlsCard}>
+          <div style={styles.playbackMainRow}>
+            <button
+              onClick={handlePlayToggle}
+              style={{
+                ...styles.button,
+                ...styles.playbackPlayButton,
+                backgroundColor: isPlaying ? '#ff6b6b' : '#51cf66',
+              }}
+            >
+              {isPlaying ? '⏸ Pause' : '▶ Play'}
+            </button>
+
+            <div style={styles.sliderWrapper}>
+              <input
+                type="range"
+                min="0"
+                max={maxTime}
+                step={1 / FPS}
+                value={timeSeconds}
+                onChange={handleSliderChange}
+                style={styles.slider}
+              />
+              <div style={styles.timelineMarkers}>
+                <div style={{...styles.marker, left: `${firstHalfPercent}%`}}>
+                  <div style={styles.markerLine}></div>
+                  <span style={styles.markerLabel}>1st</span>
+                </div>
+                <div style={{...styles.marker, left: `${secondHalfPercent}%`}}>
+                  <div style={styles.markerLine}></div>
+                  <span style={styles.markerLabel}>2nd</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1101,16 +1159,6 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
             </button>
           </div>
         </div>
-
-        <button
-          onClick={handlePlayToggle}
-          style={{
-            ...styles.button,
-            backgroundColor: isPlaying ? '#ff6b6b' : '#51cf66',
-          }}
-        >
-          {isPlaying ? '⏸ Pause' : '▶ Play'}
-        </button>
 
         <div style={styles.dashboardModeContainer}>
           <span style={styles.dashboardModeTitle}>Dashboard View</span>
@@ -1402,6 +1450,26 @@ const styles = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: '20px',
+  },
+  playbackControlsCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    padding: '12px',
+    borderRadius: '8px',
+    border: '1px solid #d8dced',
+    backgroundColor: '#f7f8fd',
+  },
+  playbackMainRow: {
+    display: 'grid',
+    gridTemplateColumns: 'auto 1fr',
+    gap: '10px',
+    alignItems: 'start',
+  },
+  playbackPlayButton: {
+    minWidth: '90px',
+    padding: '8px 12px',
+    alignSelf: 'start',
   },
   sliderWrapper: {
     position: 'relative',
