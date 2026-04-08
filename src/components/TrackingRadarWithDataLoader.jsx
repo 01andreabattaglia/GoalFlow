@@ -243,14 +243,14 @@ const generateMockData = (frameCount = 250) => {
 };
 
 const FPS = 10;
-const CANVAS_WIDTH = 700;
+const CANVAS_WIDTH = 800;
 // Default pitch dimensions (will be overridden by match data)
 const DEFAULT_PITCH_LENGTH_M = 104;
 const DEFAULT_PITCH_WIDTH_M = 68;
 
 // ========= PITCH RENDERER =========
-const drawPitch = (ctx, width, height) => {
-  ctx.fillStyle = 'white';  // white background instead of green
+const drawPitch = (ctx, width, height, pitchColor = 'white') => {
+  ctx.fillStyle = pitchColor;
   ctx.fillRect(0, 0, width, height);
 
   ctx.strokeStyle = 'black';
@@ -413,6 +413,12 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const [timeSeconds, setTimeSeconds] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedDashboard, setSelectedDashboard] = useState('physical');
+  const [physicalColors, setPhysicalColors] = useState({
+    home: '#1e90ff',
+    away: '#ff4444',
+    field: '#6EA26D',
+  });
+  const [hasCustomPhysicalColors, setHasCustomPhysicalColors] = useState(false);
   const [pitchControlColors, setPitchControlColors] = useState({
     home: '#1e90ff',
     away: '#ff4444',
@@ -424,6 +430,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const [jumpSeconds, setJumpSeconds] = useState(0);
   const [jumpPeriod, setJumpPeriod] = useState(1);
   const [wasTimeChangedManually, setWasTimeChangedManually] = useState(false);
+  const [isWhatIfSimulationOpen, setIsWhatIfSimulationOpen] = useState(false);
   const animationRef = useRef(null);
 
   // Load match data first to get pitch dimensions
@@ -495,6 +502,15 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const playerMeta = getPlayerMeta();
 
   useEffect(() => {
+    if (hasCustomPhysicalColors) return;
+    setPhysicalColors((prev) => ({
+      ...prev,
+      home: teamInfo.home_jersey || prev.home,
+      away: teamInfo.away_jersey || prev.away,
+    }));
+  }, [teamInfo.home_jersey, teamInfo.away_jersey, hasCustomPhysicalColors]);
+
+  useEffect(() => {
     if (hasCustomPitchColors) return;
     setPitchControlColors((prev) => ({
       ...prev,
@@ -502,6 +518,12 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       away: teamInfo.away_jersey || prev.away,
     }));
   }, [teamInfo.home_jersey, teamInfo.away_jersey, hasCustomPitchColors]);
+
+  useEffect(() => {
+    if (selectedDashboard !== 'pitch-control') {
+      setIsWhatIfSimulationOpen(false);
+    }
+  }, [selectedDashboard]);
 
   // Use TOTAL trackingData for frame indexing, independent of filter
   const totalFrames = trackingData.length;
@@ -613,9 +635,11 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const getPlayerColors = (player) => {
     const teamId = getPlayerTeamId(player);
     const isHome = teamId === teamInfo.home_id;
+    const dashboardHome = selectedDashboard === 'physical' ? physicalColors.home : teamInfo.home_jersey;
+    const dashboardAway = selectedDashboard === 'physical' ? physicalColors.away : teamInfo.away_jersey;
     
     return {
-      jerseyColor: isHome ? teamInfo.home_jersey : teamInfo.away_jersey,
+      jerseyColor: isHome ? dashboardHome : dashboardAway,
       numberColor: isHome ? teamInfo.home_number : teamInfo.away_number,
     };
   };
@@ -629,7 +653,8 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     ctx.clearRect(0, 0, CANVAS_WIDTH, canvasHeight);
 
     // Draw pitch
-    drawPitch(ctx, CANVAS_WIDTH, canvasHeight);
+    const pitchBackgroundColor = selectedDashboard === 'physical' ? physicalColors.field : 'white';
+    drawPitch(ctx, CANVAS_WIDTH, canvasHeight, pitchBackgroundColor);
 
     // In Pitch Control dashboard, render controlled zones as background overlay.
     if (selectedDashboard === 'pitch-control') {
@@ -680,7 +705,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     }
-  }, [currentFrame, playerMeta, teamInfo, canvasHeight, selectedDashboard, currentPitchControlFrame, pitchControlColors]);
+  }, [currentFrame, playerMeta, teamInfo, canvasHeight, selectedDashboard, currentPitchControlFrame, pitchControlColors, physicalColors]);
 
   // Redraw on frame change
   useEffect(() => {
@@ -830,6 +855,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Format max time for display
   const maxTimeDisplay = formatTimeDisplay(maxTime);
+  const isWhatIfMode = isWhatIfSimulationOpen && selectedDashboard === 'pitch-control';
 
   // Error state
   if (error && !useMockData) {
@@ -954,100 +980,116 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     <div style={styles.container}>
       {/* Left Panel - Grid Layout */}
       <div style={styles.leftPanel}>
-        <>
-          {/* Top Row */}
-          <div style={styles.quadrantRow}>
-            {/* Top Left - Video Player */}
-            <div style={styles.quadrant}>
-              <VideoPlayer syncedTime={syncedVideoTime} shouldPlay={isPlaying} />
-            </div>
-            
-            {/* Top Right - Radar */}
-            <div style={styles.quadrant}>
-              <div style={styles.radarContainer}>
+        {isWhatIfSimulationOpen && selectedDashboard === 'pitch-control' ? (
+          <div style={styles.whatIfMainView}>
+            <div style={styles.whatIfMainQuadrant}>
+              <div style={styles.whatIfMainHeader}>What-if Simulation</div>
+              <div style={styles.whatIfRadarContainer}>
                 <canvas
                   ref={canvasRef}
                   width={CANVAS_WIDTH}
                   height={canvasHeight}
-                  style={styles.canvas}
+                  style={{ ...styles.canvas, ...styles.whatIfCanvas }}
                 />
               </div>
             </div>
           </div>
-
-          {/* Bottom Row - Full Width Table */}
-          <div style={styles.bottomRow}>
-            <div style={styles.tableContainer}>
-              <div style={styles.tableWrapper}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr style={styles.tableHeader}>
-                      <th style={styles.tableHeaderCell}>Stato</th>
-                      <th style={styles.tableHeaderCell}>#</th>
-                      <th style={styles.tableHeaderCell}>Nome</th>
-                      <th style={styles.tableHeaderCell}>Ruolo</th>
-                      <th style={styles.tableHeaderCell}>Min Giocati</th>
-                      <th style={styles.tableHeaderCell}>Distanza (km)</th>
-                      <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
-                      <th style={styles.tableHeaderCell}>Sprinting (min)</th>
-                      <th style={styles.tableHeaderCell}>Jogging (min)</th>
-                      <th style={styles.tableHeaderCell}>Walking (min)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
-                      if (!player) return null;
-                      return (
-                      <tr key={idx} style={styles.tableRow}>
-                        <td style={{
-                          ...styles.tableCell,
-                          backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
-                          fontWeight: 'bold',
-                        }}>
-                          {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
-                        </td>
-                        <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                          <div
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              borderRadius: '50%',
-                              backgroundColor: player.jersey_color || '#000000',
-                              border: '2px solid #333',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              color: player.number_color || '#ffffff',
-                              fontWeight: 'bold',
-                              fontSize: '13px',
-                            }}
-                          >
-                            {player.number}
-                          </div>
-                        </td>
-                        <td style={styles.tableCell}>{player.name || 'N/A'}</td>
-                        <td style={styles.tableCell}>{player.role || 'N/A'}</td>
-                        <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
-                        <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
-                        <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
-                        <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
-                        <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
-                        <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
-                      </tr>
-                      );
-                    }) : (
-                      <tr>
-                        <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
-                          Caricamento dati...
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+        ) : (
+          <>
+            {/* Top Row */}
+            <div style={styles.quadrantRow}>
+              {/* Top Left - Video Player */}
+              <div style={styles.quadrant}>
+                <VideoPlayer syncedTime={syncedVideoTime} shouldPlay={isPlaying} />
+              </div>
+              
+              {/* Top Right - Radar */}
+              <div style={styles.quadrant}>
+                <div style={styles.radarContainer}>
+                  <canvas
+                    ref={canvasRef}
+                    width={CANVAS_WIDTH}
+                    height={canvasHeight}
+                    style={styles.canvas}
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        </>
+
+            {/* Bottom Row - Full Width Table */}
+            <div style={styles.bottomRow}>
+              <div style={styles.tableContainer}>
+                <div style={styles.tableWrapper}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr style={styles.tableHeader}>
+                        <th style={styles.tableHeaderCell}>Stato</th>
+                        <th style={styles.tableHeaderCell}>#</th>
+                        <th style={styles.tableHeaderCell}>Nome</th>
+                        <th style={styles.tableHeaderCell}>Ruolo</th>
+                        <th style={styles.tableHeaderCell}>Min Giocati</th>
+                        <th style={styles.tableHeaderCell}>Distanza (km)</th>
+                        <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
+                        <th style={styles.tableHeaderCell}>Sprinting (min)</th>
+                        <th style={styles.tableHeaderCell}>Jogging (min)</th>
+                        <th style={styles.tableHeaderCell}>Walking (min)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
+                        if (!player) return null;
+                        return (
+                        <tr key={idx} style={styles.tableRow}>
+                          <td style={{
+                            ...styles.tableCell,
+                            backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
+                            fontWeight: 'bold',
+                          }}>
+                            {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
+                          </td>
+                          <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                            <div
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '50%',
+                                backgroundColor: player.jersey_color || '#000000',
+                                border: '2px solid #333',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: player.number_color || '#ffffff',
+                                fontWeight: 'bold',
+                                fontSize: '13px',
+                              }}
+                            >
+                              {player.number}
+                            </div>
+                          </td>
+                          <td style={styles.tableCell}>{player.name || 'N/A'}</td>
+                          <td style={styles.tableCell}>{player.role || 'N/A'}</td>
+                          <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
+                          <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
+                          <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
+                          <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
+                          <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
+                          <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
+                        </tr>
+                        );
+                      }) : (
+                        <tr>
+                          <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
+                            Caricamento dati...
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Controls - Right Panel */}
@@ -1072,93 +1114,97 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
           </div>
         </div>
 
-        <div style={styles.playbackControlsCard}>
-          <div style={styles.playbackMainRow}>
-            <button
-              onClick={handlePlayToggle}
-              style={{
-                ...styles.button,
-                ...styles.playbackPlayButton,
-                backgroundColor: isPlaying ? '#ff6b6b' : '#51cf66',
-              }}
-            >
-              {isPlaying ? '⏸ Pause' : '▶ Play'}
-            </button>
+        {!isWhatIfMode && (
+          <>
+            <div style={styles.playbackControlsCard}>
+              <div style={styles.playbackMainRow}>
+                <button
+                  onClick={handlePlayToggle}
+                  style={{
+                    ...styles.button,
+                    ...styles.playbackPlayButton,
+                    backgroundColor: isPlaying ? '#ff6b6b' : '#51cf66',
+                  }}
+                >
+                  {isPlaying ? '⏸ Pause' : '▶ Play'}
+                </button>
 
-            <div style={styles.sliderWrapper}>
-              <input
-                type="range"
-                min="0"
-                max={maxTime}
-                step={1 / FPS}
-                value={timeSeconds}
-                onChange={handleSliderChange}
-                style={styles.slider}
-              />
-              <div style={styles.timelineMarkers}>
-                <div style={{...styles.marker, left: `${firstHalfPercent}%`}}>
-                  <div style={styles.markerLine}></div>
-                  <span style={styles.markerLabel}>1st</span>
-                </div>
-                <div style={{...styles.marker, left: `${secondHalfPercent}%`}}>
-                  <div style={styles.markerLine}></div>
-                  <span style={styles.markerLabel}>2nd</span>
+                <div style={styles.sliderWrapper}>
+                  <input
+                    type="range"
+                    min="0"
+                    max={maxTime}
+                    step={1 / FPS}
+                    value={timeSeconds}
+                    onChange={handleSliderChange}
+                    style={styles.slider}
+                  />
+                  <div style={styles.timelineMarkers}>
+                    <div style={{...styles.marker, left: `${firstHalfPercent}%`}}>
+                      <div style={styles.markerLine}></div>
+                      <span style={styles.markerLabel}>1st</span>
+                    </div>
+                    <div style={{...styles.marker, left: `${secondHalfPercent}%`}}>
+                      <div style={styles.markerLine}></div>
+                      <span style={styles.markerLabel}>2nd</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </div>
 
-        <div style={styles.jumpToTimeContainer}>
-          <div style={styles.jumpHeaderRow}>
-            <label style={styles.label}>Jump to time</label>
-            <div style={styles.jumpSelectHeader}>
-              <select
-                value={jumpPeriod}
-                onChange={(e) => setJumpPeriod(parseInt(e.target.value))}
-                style={styles.jumpSelectInput}
-              >
-                <option value={1}>1st Half</option>
-                <option value={2}>2nd Half</option>
-              </select>
+            <div style={styles.jumpToTimeContainer}>
+              <div style={styles.jumpHeaderRow}>
+                <label style={styles.label}>Jump to time</label>
+                <div style={styles.jumpSelectHeader}>
+                  <select
+                    value={jumpPeriod}
+                    onChange={(e) => setJumpPeriod(parseInt(e.target.value))}
+                    style={styles.jumpSelectInput}
+                  >
+                    <option value={1}>1st Half</option>
+                    <option value={2}>2nd Half</option>
+                  </select>
+                </div>
+              </div>
+              <div style={styles.jumpInputGrid}>
+                <div style={styles.jumpTimeInputs}>
+                  <input
+                    type="number"
+                    min="0"
+                    max={Math.floor(maxTime / 60)}
+                    value={jumpMinutes || ''}
+                    onChange={(e) => setJumpMinutes(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={{
+                      ...styles.jumpInput,
+                      color: jumpMinutes ? '#000' : '#999'
+                    }}
+                    placeholder="00"
+                  />
+                  <span style={styles.timeSeparator}>:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="59"
+                    value={jumpSeconds ? String(jumpSeconds).padStart(2, '0') : ''}
+                    onChange={(e) => setJumpSeconds(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                    style={{
+                      ...styles.jumpInput,
+                      color: jumpSeconds ? '#000' : '#999'
+                    }}
+                    placeholder="00"
+                  />
+                </div>
+                <button
+                  onClick={handleJumpToTime}
+                  style={styles.jumpButton}
+                >
+                  Go
+                </button>
+              </div>
             </div>
-          </div>
-          <div style={styles.jumpInputGrid}>
-            <div style={styles.jumpTimeInputs}>
-              <input
-                type="number"
-                min="0"
-                max={Math.floor(maxTime / 60)}
-                value={jumpMinutes || ''}
-                onChange={(e) => setJumpMinutes(Math.max(0, parseInt(e.target.value) || 0))}
-                style={{
-                  ...styles.jumpInput,
-                  color: jumpMinutes ? '#000' : '#999'
-                }}
-                placeholder="00"
-              />
-              <span style={styles.timeSeparator}>:</span>
-              <input
-                type="number"
-                min="0"
-                max="59"
-                value={jumpSeconds ? String(jumpSeconds).padStart(2, '0') : ''}
-                onChange={(e) => setJumpSeconds(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
-                style={{
-                  ...styles.jumpInput,
-                  color: jumpSeconds ? '#000' : '#999'
-                }}
-                placeholder="00"
-              />
-            </div>
-            <button
-              onClick={handleJumpToTime}
-              style={styles.jumpButton}
-            >
-              Go
-            </button>
-          </div>
-        </div>
+          </>
+        )}
 
         <div style={styles.dashboardModeContainer}>
           <span style={styles.dashboardModeTitle}>Dashboard View</span>
@@ -1182,6 +1228,72 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
               Pitch Control
             </button>
           </div>
+
+          {selectedDashboard === 'physical' && (
+            <div style={styles.pitchLegendPanel}>
+              <span style={styles.pitchLegendTitle}>Legenda Colori Physical</span>
+
+              <div style={styles.pitchLegendRow}>
+                <div
+                  style={{
+                    ...styles.pitchLegendSwatch,
+                    backgroundColor: physicalColors.home,
+                    borderColor: physicalColors.home,
+                  }}
+                />
+                <span style={styles.pitchLegendLabel}>{matchData?.home_team?.name || 'Home'}</span>
+                <input
+                  type="color"
+                  value={physicalColors.home}
+                  onChange={(e) => {
+                    setHasCustomPhysicalColors(true);
+                    setPhysicalColors((prev) => ({ ...prev, home: e.target.value }));
+                  }}
+                  style={styles.pitchLegendColorInput}
+                />
+              </div>
+
+              <div style={styles.pitchLegendRow}>
+                <div
+                  style={{
+                    ...styles.pitchLegendSwatch,
+                    backgroundColor: physicalColors.away,
+                    borderColor: physicalColors.away,
+                  }}
+                />
+                <span style={styles.pitchLegendLabel}>{matchData?.away_team?.name || 'Away'}</span>
+                <input
+                  type="color"
+                  value={physicalColors.away}
+                  onChange={(e) => {
+                    setHasCustomPhysicalColors(true);
+                    setPhysicalColors((prev) => ({ ...prev, away: e.target.value }));
+                  }}
+                  style={styles.pitchLegendColorInput}
+                />
+              </div>
+
+              <div style={styles.pitchLegendRow}>
+                <div
+                  style={{
+                    ...styles.pitchLegendSwatch,
+                    backgroundColor: physicalColors.field,
+                    borderColor: physicalColors.field,
+                  }}
+                />
+                <span style={styles.pitchLegendLabel}>Colore Campo</span>
+                <input
+                  type="color"
+                  value={physicalColors.field}
+                  onChange={(e) => {
+                    setHasCustomPhysicalColors(true);
+                    setPhysicalColors((prev) => ({ ...prev, field: e.target.value }));
+                  }}
+                  style={styles.pitchLegendColorInput}
+                />
+              </div>
+            </div>
+          )}
 
           {selectedDashboard === 'pitch-control' && (
             <div style={styles.pitchLegendPanel}>
@@ -1249,6 +1361,21 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
             </div>
           )}
         </div>
+
+        {selectedDashboard === 'pitch-control' && (
+          <div style={styles.whatIfButtonSection}>
+            <button
+              onClick={() => setIsWhatIfSimulationOpen((prev) => !prev)}
+              style={{
+                ...styles.button,
+                ...styles.whatIfButton,
+                backgroundColor: isWhatIfSimulationOpen ? '#e03131' : '#2f9e44',
+              }}
+            >
+              {isWhatIfSimulationOpen ? 'Close What-If Simulation' : 'Open What-If Simulation'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1271,6 +1398,33 @@ const styles = {
     flexDirection: 'column',
     gap: '20px',
     minHeight: '0',
+  },
+  whatIfMainView: {
+    flex: 1,
+    display: 'flex',
+    minHeight: '0',
+  },
+  whatIfMainQuadrant: {
+    backgroundColor: 'white',
+    borderRadius: '8px',
+    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '16px',
+    width: '100%',
+    minHeight: '0',
+  },
+  whatIfMainHeader: {
+    width: '100%',
+    textAlign: 'left',
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#3b4562',
+    marginBottom: '8px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
   },
   quadrantRow: {
     display: 'grid',
@@ -1313,6 +1467,18 @@ const styles = {
     width: '100%',
     height: '100%',
     padding: '10px',
+  },
+  whatIfRadarContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    height: '100%',
+    padding: '0',
+  },
+  whatIfCanvas: {
+    width: '66.67%',
+    maxWidth: '66.67%',
   },
   bottomRow: {
     backgroundColor: 'white',
@@ -1377,7 +1543,7 @@ const styles = {
     cursor: 'crosshair',
     maxWidth: '100%',
     maxHeight: '100%',
-    width: 'auto',
+    width: '100%',
     height: 'auto',
   },
   controlsSection: {
@@ -1389,6 +1555,19 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+    position: 'relative',
+    paddingBottom: '250px',
+  },
+  whatIfButtonSection: {
+    position: 'absolute',
+    left: '24px',
+    right: '24px',
+    bottom: '24px',
+  },
+  whatIfButton: {
+    width: '100%',
+    padding: '12px 14px',
+    fontSize: '13px',
   },
   title: {
     margin: '0 0 12px 0',
@@ -1636,6 +1815,11 @@ const styles = {
     whiteSpace: 'nowrap',
   },
   dashboardModeContainer: {
+    position: 'absolute',
+    left: '24px',
+    right: '24px',
+    top: '430px',
+    minHeight: '210px',
     padding: '12px',
     borderRadius: '8px',
     backgroundColor: '#f9f9f9',
