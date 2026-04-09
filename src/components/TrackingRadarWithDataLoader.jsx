@@ -1000,7 +1000,11 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
             <div style={styles.quadrantRow}>
               {/* Top Left - Video Player */}
               <div style={styles.quadrant}>
-                <VideoPlayer syncedTime={syncedVideoTime} shouldPlay={isPlaying} />
+                <VideoPlayer
+                  syncedTime={syncedVideoTime}
+                  initialSyncedTime={calculateSyncedVideoTime()}
+                  shouldPlay={isPlaying}
+                />
               </div>
               
               {/* Top Right - Radar */}

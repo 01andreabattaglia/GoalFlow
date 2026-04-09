@@ -3,9 +3,26 @@ import React, { useRef, useEffect } from 'react';
 const VideoPlayer = ({ 
   videoPath = '/data/Isuzu UTE A-League 2024-25 - Round 6 - Auckland FC v Newcastle Jets.mp4',
   syncedTime = null,
+  initialSyncedTime = null,
   shouldPlay = false,
 }) => {
   const videoRef = useRef(null);
+  const hasAppliedInitialSyncRef = useRef(false);
+
+  // When the component is remounted (e.g. closing What-If view),
+  // restore the video at the radar-aligned timestamp.
+  useEffect(() => {
+    if (hasAppliedInitialSyncRef.current) return;
+    if (!videoRef.current) return;
+    if (initialSyncedTime === null || !isFinite(initialSyncedTime)) return;
+
+    const currentVideoTime = videoRef.current.currentTime || 0;
+    if (Math.abs(currentVideoTime - initialSyncedTime) > 0.15) {
+      videoRef.current.currentTime = initialSyncedTime;
+    }
+
+    hasAppliedInitialSyncRef.current = true;
+  }, [initialSyncedTime]);
 
   // Sync play/pause command from radar - start/stop playback
   useEffect(() => {
