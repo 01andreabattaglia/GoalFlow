@@ -206,6 +206,66 @@ const usePitchControlData = (filePath) => {
 };
 
 /**
+ * Hook to load player max acceleration and speed parameters from CSV.
+ */
+const usePlayerParams = (filePath) => {
+  const [paramsByPlayerId, setParamsByPlayerId] = useState({});
+
+  useEffect(() => {
+    const loadParams = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const text = await response.text();
+        const lines = text
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0);
+
+        if (lines.length <= 1) {
+          setParamsByPlayerId({});
+          return;
+        }
+
+        const headers = lines[0].split(',').map((h) => h.trim());
+        const playerIdIdx = headers.indexOf('player_id');
+        const accelIdx = headers.indexOf('max_acceleration_mps2');
+        const vmaxKmhIdx = headers.indexOf('max_speed_kmh');
+
+        if (playerIdIdx < 0 || accelIdx < 0 || vmaxKmhIdx < 0) {
+          setParamsByPlayerId({});
+          return;
+        }
+
+        const mapped = {};
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(',').map((c) => c.trim());
+          const playerId = Number(cols[playerIdIdx]);
+          const accel = Number(cols[accelIdx]);
+          const vmaxKmh = Number(cols[vmaxKmhIdx]);
+          if (!Number.isFinite(playerId) || !Number.isFinite(accel) || !Number.isFinite(vmaxKmh)) continue;
+
+          mapped[playerId] = {
+            accel,
+            vmax: vmaxKmh / 3.6,
+          };
+        }
+
+        setParamsByPlayerId(mapped);
+      } catch (err) {
+        console.error('Error loading player params CSV:', err);
+        setParamsByPlayerId({});
+      }
+    };
+
+    loadParams();
+  }, [filePath]);
+
+  return paramsByPlayerId;
+};
+
+/**
  * Generate mock data with realistic dimensions (104m x 68m)
  */
 const generateMockData = (frameCount = 250) => {
@@ -369,6 +429,149 @@ const toRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+const normalizedToPitchMeters = (normX, normY, pitchLength, pitchWidth) => ({
+  x: normX * pitchLength - pitchLength / 2,
+  y: normY * pitchWidth - pitchWidth / 2,
+});
+
+const ballTimeToCell = (ballX, ballY, cellX, cellY, sBall) => {
+  const dx = cellX - ballX;
+  const dy = cellY - ballY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 1e-9) return 0;
+  if (sBall <= 0) return Number.POSITIVE_INFINITY;
+  return dist / sBall;
+};
+
+const playerTimeToCell = (px, py, vx, vy, cellX, cellY, accel, vmax) => {
+  const dx = cellX - px;
+  const dy = cellY - py;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d < 1e-9) return 0;
+  if (vmax <= 0 && accel <= 0) return Number.POSITIVE_INFINITY;
+
+  const ux = dx / d;
+  const uy = dy / d;
+  let v0 = Math.max(0, vx * ux + vy * uy);
+
+  const safeVmax = Math.max(vmax, 1e-6);
+  if (v0 > safeVmax) v0 = safeVmax;
+
+  if (accel <= 0) {
+    const vConst = Math.max(Math.min(safeVmax, Math.max(v0, 1e-6)), 1e-6);
+    return d / vConst;
+  }
+
+  const tAcc = Math.max(0, (safeVmax - v0) / accel);
+  const dAcc = v0 * tAcc + 0.5 * accel * tAcc * tAcc;
+
+  if (d <= dAcc) {
+    const disc = Math.max(0, v0 * v0 + 2 * accel * d);
+    return (-v0 + Math.sqrt(disc)) / accel;
+  }
+
+  return tAcc + (d - dAcc) / safeVmax;
+};
+
+const classifyControlCell = (th, ta, tb, eps) => {
+  if (th < tb && ta < tb) return 0;
+  if (th < tb && tb < ta) return 1;
+  if (ta < tb && tb < th) return -1;
+  if (tb < th && tb < ta) {
+    if (th + eps < ta) return 1;
+    if (ta + eps < th) return -1;
+    return 0;
+  }
+  return 0;
+};
+
+const computePitchControlMatrix = ({
+  players,
+  ball,
+  pitchLength,
+  pitchWidth,
+  homeTeamId,
+  awayTeamId,
+  cellSize = 1.0,
+  sBall = 18.0,
+  eps = 0.3,
+}) => {
+  if (!Array.isArray(players) || players.length === 0 || !pitchLength || !pitchWidth) {
+    return null;
+  }
+
+  const xMin = -pitchLength / 2;
+  const xMax = pitchLength / 2;
+  const yMin = -pitchWidth / 2;
+  const yMax = pitchWidth / 2;
+
+  const widthCells = Math.max(1, Math.floor((xMax - xMin) / cellSize));
+  const heightCells = Math.max(1, Math.floor((yMax - yMin) / cellSize));
+  const matrix = Array.from({ length: heightCells }, () => Array.from({ length: widthCells }, () => 0));
+
+  for (let i = 0; i < heightCells; i++) {
+    for (let j = 0; j < widthCells; j++) {
+      const cellX = xMin + (j + 0.5) * cellSize;
+      const cellY = yMin + (i + 0.5) * cellSize;
+
+      const tb = ballTimeToCell(ball.x, ball.y, cellX, cellY, sBall);
+      let th = Number.POSITIVE_INFINITY;
+      let ta = Number.POSITIVE_INFINITY;
+
+      for (let pIdx = 0; pIdx < players.length; pIdx++) {
+        const p = players[pIdx];
+        const tp = playerTimeToCell(
+          p.x,
+          p.y,
+          p.vx,
+          p.vy,
+          cellX,
+          cellY,
+          p.accel,
+          p.vmax,
+        );
+
+        if (p.team_id === homeTeamId && tp < th) th = tp;
+        else if (p.team_id === awayTeamId && tp < ta) ta = tp;
+      }
+
+      matrix[i][j] = classifyControlCell(th, ta, tb, eps);
+    }
+  }
+
+  return { matrix, widthCells, heightCells };
+};
+
+const drawPitchControlMatrix = (ctx, controlMatrixObj, width, height, controlColors) => {
+  if (!controlMatrixObj || !controlMatrixObj.matrix) return;
+
+  const { matrix, widthCells, heightCells } = controlMatrixObj;
+  if (!widthCells || !heightCells) return;
+
+  const cellW = width / widthCells;
+  const cellH = height / heightCells;
+
+  for (let row = 0; row < heightCells; row++) {
+    const drawRow = heightCells - 1 - row;
+    const rowData = matrix[row];
+
+    for (let col = 0; col < widthCells; col++) {
+      const value = rowData[col];
+      if (value === 1) {
+        ctx.fillStyle = toRgba(controlColors.home, 0.22);
+      } else if (value === -1) {
+        ctx.fillStyle = toRgba(controlColors.away, 0.22);
+      } else {
+        ctx.fillStyle = toRgba(controlColors.neutral, 0.22);
+      }
+
+      ctx.fillRect(col * cellW, drawRow * cellH, cellW, cellH);
+    }
+  }
+};
+
 const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height, controlColors) => {
   if (!pitchControlFrame) return;
 
@@ -431,6 +634,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const [jumpPeriod, setJumpPeriod] = useState(1);
   const [wasTimeChangedManually, setWasTimeChangedManually] = useState(false);
   const [isWhatIfSimulationOpen, setIsWhatIfSimulationOpen] = useState(false);
+  const [whatIfInitialPositions, setWhatIfInitialPositions] = useState({});
+  const [whatIfPlayerPositions, setWhatIfPlayerPositions] = useState({});
+  const [draggedPlayerId, setDraggedPlayerId] = useState(null);
   const animationRef = useRef(null);
 
   // Load match data first to get pitch dimensions
@@ -444,6 +650,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Load video sync data
   const { syncData } = useVideoSyncData('/data/video_sync.json');
+
+  // Load per-player acceleration and max speed used by pitch control equations
+  const playerParamsById = usePlayerParams('/data/1886347_player_max_speed_accel.csv');
 
   // Get pitch dimensions from match data or use defaults
   const pitchLength = matchData?.pitch_length || DEFAULT_PITCH_LENGTH_M;
@@ -644,6 +853,131 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     };
   };
 
+  const isWhatIfMode = isWhatIfSimulationOpen && selectedDashboard === 'pitch-control';
+
+  useEffect(() => {
+    if (!isWhatIfMode) {
+      setDraggedPlayerId(null);
+      setWhatIfPlayerPositions({});
+      setWhatIfInitialPositions({});
+      return;
+    }
+
+    if (Object.keys(whatIfInitialPositions).length === 0) {
+      const initialSnapshot = {};
+      (currentFrame.player_data || []).forEach((player) => {
+        if (player?.player_id === undefined || player.x === undefined || player.y === undefined) return;
+        initialSnapshot[player.player_id] = { x: player.x, y: player.y };
+      });
+      setWhatIfInitialPositions(initialSnapshot);
+      setWhatIfPlayerPositions({});
+      setDraggedPlayerId(null);
+    }
+
+    // What-if is detached from timeline and video playback.
+    setIsPlaying(false);
+    setWasTimeChangedManually(false);
+  }, [isWhatIfMode, currentFrame, whatIfInitialPositions]);
+
+  useEffect(() => {
+    // Reset custom positions when frame changes.
+    setDraggedPlayerId(null);
+    setWhatIfPlayerPositions({});
+  }, [frameIndex]);
+
+  const previousFrame = frameIndex > 0 ? trackingData[frameIndex - 1] : null;
+
+  const velocityByPlayerId = useMemo(() => {
+    const velocityMap = {};
+    const previousById = {};
+
+    if (previousFrame?.player_data?.length) {
+      previousFrame.player_data.forEach((p) => {
+        if (p?.player_id !== undefined && p.x !== undefined && p.y !== undefined) {
+          previousById[p.player_id] = p;
+        }
+      });
+    }
+
+    const currentFrameNumber = Number(currentFrame.frameNumber ?? currentFrame.frame ?? frameIndex);
+    const previousFrameNumber = Number(previousFrame?.frameNumber ?? previousFrame?.frame ?? Math.max(0, frameIndex - 1));
+    const frameDelta = Math.max(1, currentFrameNumber - previousFrameNumber);
+    const dt = frameDelta / FPS;
+
+    (currentFrame.player_data || []).forEach((p) => {
+      if (!p || p.player_id === undefined || p.x === undefined || p.y === undefined) return;
+
+      const prev = previousById[p.player_id];
+      if (!prev || prev.x === undefined || prev.y === undefined) {
+        velocityMap[p.player_id] = { vx: 0, vy: 0 };
+        return;
+      }
+
+      const nowMeters = normalizedToPitchMeters(p.x, p.y, pitchLength, pitchWidth);
+      const prevMeters = normalizedToPitchMeters(prev.x, prev.y, pitchLength, pitchWidth);
+      velocityMap[p.player_id] = {
+        vx: (nowMeters.x - prevMeters.x) / dt,
+        vy: (nowMeters.y - prevMeters.y) / dt,
+      };
+    });
+
+    return velocityMap;
+  }, [currentFrame, previousFrame, frameIndex, pitchLength, pitchWidth]);
+
+  const whatIfPlayers = useMemo(() => {
+    return (currentFrame.player_data || [])
+      .map((p) => {
+        if (!p || p.player_id === undefined || p.x === undefined || p.y === undefined) return null;
+
+        const basePosition = whatIfInitialPositions[p.player_id];
+        const baseNormX = basePosition?.x ?? p.x;
+        const baseNormY = basePosition?.y ?? p.y;
+        const overridden = whatIfPlayerPositions[p.player_id];
+        const normX = overridden?.x ?? baseNormX;
+        const normY = overridden?.y ?? baseNormY;
+        const meters = normalizedToPitchMeters(normX, normY, pitchLength, pitchWidth);
+        const velocity = velocityByPlayerId[p.player_id] || { vx: 0, vy: 0 };
+        const teamId = getPlayerTeamId(p);
+        const params = playerParamsById[p.player_id] || { accel: 2.5, vmax: 7.0 };
+
+        return {
+          ...p,
+          team_id: teamId,
+          normX,
+          normY,
+          x: meters.x,
+          y: meters.y,
+          vx: velocity.vx,
+          vy: velocity.vy,
+          accel: params.accel,
+          vmax: params.vmax,
+        };
+      })
+      .filter((p) => p !== null);
+  }, [currentFrame, whatIfInitialPositions, whatIfPlayerPositions, pitchLength, pitchWidth, velocityByPlayerId, playerParamsById, getPlayerTeamId]);
+
+  const whatIfBallMeters = useMemo(() => {
+    const ballNormX = Number.isFinite(currentFrame.ball_data?.x) ? currentFrame.ball_data.x : 0.5;
+    const ballNormY = Number.isFinite(currentFrame.ball_data?.y) ? currentFrame.ball_data.y : 0.5;
+    return normalizedToPitchMeters(ballNormX, ballNormY, pitchLength, pitchWidth);
+  }, [currentFrame, pitchLength, pitchWidth]);
+
+  const whatIfPitchControl = useMemo(() => {
+    if (!isWhatIfMode) return null;
+
+    return computePitchControlMatrix({
+      players: whatIfPlayers,
+      ball: whatIfBallMeters,
+      pitchLength,
+      pitchWidth,
+      homeTeamId: teamInfo.home_id,
+      awayTeamId: teamInfo.away_id,
+      cellSize: 1.0,
+      sBall: 18.0,
+      eps: 0.3,
+    });
+  }, [isWhatIfMode, whatIfPlayers, whatIfBallMeters, pitchLength, pitchWidth, teamInfo.home_id, teamInfo.away_id]);
+
   // Draw function
   const drawFrame = useCallback(() => {
     const canvas = canvasRef.current;
@@ -658,11 +992,17 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     // In Pitch Control dashboard, render controlled zones as background overlay.
     if (selectedDashboard === 'pitch-control') {
-      drawPitchControlOverlay(ctx, currentPitchControlFrame, CANVAS_WIDTH, canvasHeight, pitchControlColors);
+      if (isWhatIfMode && whatIfPitchControl) {
+        drawPitchControlMatrix(ctx, whatIfPitchControl, CANVAS_WIDTH, canvasHeight, pitchControlColors);
+      } else {
+        drawPitchControlOverlay(ctx, currentPitchControlFrame, CANVAS_WIDTH, canvasHeight, pitchControlColors);
+      }
     }
 
     // Draw players
-    const players = currentFrame.player_data || [];
+    const players = isWhatIfMode
+      ? whatIfPlayers.map((p) => ({ ...p, x: p.normX, y: p.normY }))
+      : currentFrame.player_data || [];
     players.forEach((player) => {
       const x = player.x;
       const y = player.y;
@@ -705,7 +1045,19 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       ctx.lineWidth = 0.8;
       ctx.stroke();
     }
-  }, [currentFrame, playerMeta, teamInfo, canvasHeight, selectedDashboard, currentPitchControlFrame, pitchControlColors, physicalColors]);
+  }, [
+    currentFrame,
+    playerMeta,
+    teamInfo,
+    canvasHeight,
+    selectedDashboard,
+    currentPitchControlFrame,
+    pitchControlColors,
+    physicalColors,
+    isWhatIfMode,
+    whatIfPlayers,
+    whatIfPitchControl,
+  ]);
 
   // Redraw on frame change
   useEffect(() => {
@@ -774,6 +1126,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     const handleKeyDown = (event) => {
       if (isEditableTarget(event.target)) return;
+      if (isWhatIfMode) return;
 
       if (event.code === 'Space') {
         event.preventDefault();
@@ -790,7 +1143,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [stepFrame]);
+  }, [stepFrame, isWhatIfMode]);
 
   // Calculate marker positions for first and second half
   const getMarkerPositions = () => {
@@ -855,7 +1208,76 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Format max time for display
   const maxTimeDisplay = formatTimeDisplay(maxTime);
-  const isWhatIfMode = isWhatIfSimulationOpen && selectedDashboard === 'pitch-control';
+
+  const getCanvasCoordinates = useCallback((event) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+
+    const pixelX = ((event.clientX - rect.left) / rect.width) * CANVAS_WIDTH;
+    const pixelY = ((event.clientY - rect.top) / rect.height) * canvasHeight;
+    const normX = clamp(pixelX / CANVAS_WIDTH, 0, 1);
+    const normY = clamp(1 - pixelY / canvasHeight, 0, 1);
+
+    return { pixelX, pixelY, normX, normY };
+  }, [canvasHeight]);
+
+  const handleWhatIfMouseDown = useCallback((event) => {
+    if (!isWhatIfMode) return;
+
+    const coords = getCanvasCoordinates(event);
+    if (!coords) return;
+
+    let selectedPlayerId = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    const maxPickRadius = 16;
+
+    whatIfPlayers.forEach((player) => {
+      const [px, py] = normalizedToPixels(player.normX, player.normY, CANVAS_WIDTH, canvasHeight);
+      const dx = px - coords.pixelX;
+      const dy = py - coords.pixelY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist <= maxPickRadius && dist < bestDist) {
+        bestDist = dist;
+        selectedPlayerId = player.player_id;
+      }
+    });
+
+    if (selectedPlayerId !== null) {
+      setDraggedPlayerId(selectedPlayerId);
+    }
+  }, [isWhatIfMode, getCanvasCoordinates, whatIfPlayers, canvasHeight]);
+
+  const handleWhatIfMouseMove = useCallback((event) => {
+    if (!isWhatIfMode || draggedPlayerId === null) return;
+
+    const coords = getCanvasCoordinates(event);
+    if (!coords) return;
+
+    setWhatIfPlayerPositions((prev) => ({
+      ...prev,
+      [draggedPlayerId]: {
+        x: coords.normX,
+        y: coords.normY,
+      },
+    }));
+  }, [isWhatIfMode, draggedPlayerId, getCanvasCoordinates]);
+
+  const stopDragging = useCallback(() => {
+    if (draggedPlayerId !== null) {
+      setDraggedPlayerId(null);
+    }
+  }, [draggedPlayerId]);
+
+  const handleResetWhatIfPositions = useCallback(() => {
+    setDraggedPlayerId(null);
+    setWhatIfPlayerPositions({});
+  }, []);
+
+  const hasWhatIfOverrides = Object.keys(whatIfPlayerPositions).length > 0;
 
   // Error state
   if (error && !useMockData) {
@@ -990,6 +1412,10 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                   width={CANVAS_WIDTH}
                   height={canvasHeight}
                   style={{ ...styles.canvas, ...styles.whatIfCanvas }}
+                  onMouseDown={handleWhatIfMouseDown}
+                  onMouseMove={handleWhatIfMouseMove}
+                  onMouseUp={stopDragging}
+                  onMouseLeave={stopDragging}
                 />
               </div>
             </div>
@@ -1368,6 +1794,20 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
         {selectedDashboard === 'pitch-control' && (
           <div style={styles.whatIfButtonSection}>
+            {isWhatIfMode && (
+              <button
+                onClick={handleResetWhatIfPositions}
+                disabled={!hasWhatIfOverrides}
+                style={{
+                  ...styles.button,
+                  ...styles.whatIfResetButton,
+                  ...(hasWhatIfOverrides ? {} : styles.whatIfResetButtonDisabled),
+                }}
+              >
+                Reset What-If Positions
+              </button>
+            )}
+
             <button
               onClick={() => setIsWhatIfSimulationOpen((prev) => !prev)}
               style={{
@@ -1572,6 +2012,18 @@ const styles = {
     width: '100%',
     padding: '12px 14px',
     fontSize: '13px',
+  },
+  whatIfResetButton: {
+    width: '100%',
+    padding: '10px 14px',
+    fontSize: '12px',
+    marginBottom: '8px',
+    backgroundColor: '#1971c2',
+  },
+  whatIfResetButtonDisabled: {
+    backgroundColor: '#adb5bd',
+    cursor: 'not-allowed',
+    opacity: 0.85,
   },
   title: {
     margin: '0 0 12px 0',
