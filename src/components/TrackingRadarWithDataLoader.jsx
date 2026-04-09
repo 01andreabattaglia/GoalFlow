@@ -304,6 +304,8 @@ const generateMockData = (frameCount = 250) => {
 
 const FPS = 10;
 const CANVAS_WIDTH = 800;
+const VELOCITY_SELECTOR_SIZE = 170;
+const VELOCITY_SELECTOR_MAX_RADIUS = 58;
 // Default pitch dimensions (will be overridden by match data)
 const DEFAULT_PITCH_LENGTH_M = 104;
 const DEFAULT_PITCH_WIDTH_M = 68;
@@ -636,7 +638,11 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const [isWhatIfSimulationOpen, setIsWhatIfSimulationOpen] = useState(false);
   const [whatIfInitialPositions, setWhatIfInitialPositions] = useState({});
   const [whatIfPlayerPositions, setWhatIfPlayerPositions] = useState({});
+  const [whatIfVelocityOverrides, setWhatIfVelocityOverrides] = useState({});
+  const [selectedWhatIfPlayerId, setSelectedWhatIfPlayerId] = useState(null);
   const [draggedPlayerId, setDraggedPlayerId] = useState(null);
+  const velocitySelectorCanvasRef = useRef(null);
+  const isVelocityDrawingRef = useRef(false);
   const animationRef = useRef(null);
 
   // Load match data first to get pitch dimensions
@@ -858,7 +864,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   useEffect(() => {
     if (!isWhatIfMode) {
       setDraggedPlayerId(null);
+      setSelectedWhatIfPlayerId(null);
       setWhatIfPlayerPositions({});
+      setWhatIfVelocityOverrides({});
       setWhatIfInitialPositions({});
       return;
     }
@@ -871,7 +879,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
       });
       setWhatIfInitialPositions(initialSnapshot);
       setWhatIfPlayerPositions({});
+      setWhatIfVelocityOverrides({});
       setDraggedPlayerId(null);
+      setSelectedWhatIfPlayerId(null);
     }
 
     // What-if is detached from timeline and video playback.
@@ -882,7 +892,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   useEffect(() => {
     // Reset custom positions when frame changes.
     setDraggedPlayerId(null);
+    setSelectedWhatIfPlayerId(null);
     setWhatIfPlayerPositions({});
+    setWhatIfVelocityOverrides({});
   }, [frameIndex]);
 
   const previousFrame = frameIndex > 0 ? trackingData[frameIndex - 1] : null;
@@ -936,7 +948,8 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
         const normX = overridden?.x ?? baseNormX;
         const normY = overridden?.y ?? baseNormY;
         const meters = normalizedToPitchMeters(normX, normY, pitchLength, pitchWidth);
-        const velocity = velocityByPlayerId[p.player_id] || { vx: 0, vy: 0 };
+        const velocityOverride = whatIfVelocityOverrides[p.player_id];
+        const velocity = velocityOverride || velocityByPlayerId[p.player_id] || { vx: 0, vy: 0 };
         const teamId = getPlayerTeamId(p);
         const params = playerParamsById[p.player_id] || { accel: 2.5, vmax: 7.0 };
 
@@ -954,13 +967,166 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
         };
       })
       .filter((p) => p !== null);
-  }, [currentFrame, whatIfInitialPositions, whatIfPlayerPositions, pitchLength, pitchWidth, velocityByPlayerId, playerParamsById, getPlayerTeamId]);
+  }, [
+    currentFrame,
+    whatIfInitialPositions,
+    whatIfPlayerPositions,
+    whatIfVelocityOverrides,
+    pitchLength,
+    pitchWidth,
+    velocityByPlayerId,
+    playerParamsById,
+    getPlayerTeamId,
+  ]);
 
   const whatIfBallMeters = useMemo(() => {
     const ballNormX = Number.isFinite(currentFrame.ball_data?.x) ? currentFrame.ball_data.x : 0.5;
     const ballNormY = Number.isFinite(currentFrame.ball_data?.y) ? currentFrame.ball_data.y : 0.5;
     return normalizedToPitchMeters(ballNormX, ballNormY, pitchLength, pitchWidth);
   }, [currentFrame, pitchLength, pitchWidth]);
+
+  const selectedWhatIfPlayer = useMemo(() => {
+    if (selectedWhatIfPlayerId === null) return null;
+    return whatIfPlayers.find((p) => p.player_id === selectedWhatIfPlayerId) || null;
+  }, [whatIfPlayers, selectedWhatIfPlayerId]);
+
+  const selectedWhatIfSpeed = useMemo(() => {
+    if (!selectedWhatIfPlayer) return 0;
+    return Math.sqrt(
+      selectedWhatIfPlayer.vx * selectedWhatIfPlayer.vx +
+      selectedWhatIfPlayer.vy * selectedWhatIfPlayer.vy
+    );
+  }, [selectedWhatIfPlayer]);
+
+  const drawVelocitySelector = useCallback(() => {
+    const canvas = velocitySelectorCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const size = VELOCITY_SELECTOR_SIZE;
+    const center = size / 2;
+
+    ctx.clearRect(0, 0, size, size);
+
+    // Background and guide ring for velocity magnitude.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.strokeStyle = '#d1d9f2';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.arc(center, center, VELOCITY_SELECTOR_MAX_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.strokeStyle = '#e5e7eb';
+    ctx.beginPath();
+    ctx.moveTo(center - VELOCITY_SELECTOR_MAX_RADIUS, center);
+    ctx.lineTo(center + VELOCITY_SELECTOR_MAX_RADIUS, center);
+    ctx.moveTo(center, center - VELOCITY_SELECTOR_MAX_RADIUS);
+    ctx.lineTo(center, center + VELOCITY_SELECTOR_MAX_RADIUS);
+    ctx.stroke();
+
+    if (!selectedWhatIfPlayer) return;
+
+    const vmax = Math.max(1e-6, selectedWhatIfPlayer.vmax || 7.0);
+    const speed = Math.sqrt(
+      selectedWhatIfPlayer.vx * selectedWhatIfPlayer.vx +
+      selectedWhatIfPlayer.vy * selectedWhatIfPlayer.vy
+    );
+
+    if (speed <= 1e-6) return;
+
+    const ratio = Math.min(1, speed / vmax);
+    const dirX = selectedWhatIfPlayer.vx / speed;
+    const dirY = selectedWhatIfPlayer.vy / speed;
+    const endX = center + dirX * ratio * VELOCITY_SELECTOR_MAX_RADIUS;
+    const endY = center - dirY * ratio * VELOCITY_SELECTOR_MAX_RADIUS;
+
+    // Draw velocity arrow from player center.
+    ctx.strokeStyle = '#0b7285';
+    ctx.fillStyle = '#0b7285';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(center, center);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+
+    const headLength = 8;
+    const angle = Math.atan2(endY - center, endX - center);
+    ctx.beginPath();
+    ctx.moveTo(endX, endY);
+    ctx.lineTo(
+      endX - headLength * Math.cos(angle - Math.PI / 6),
+      endY - headLength * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.lineTo(
+      endX - headLength * Math.cos(angle + Math.PI / 6),
+      endY - headLength * Math.sin(angle + Math.PI / 6)
+    );
+    ctx.closePath();
+    ctx.fill();
+  }, [selectedWhatIfPlayer]);
+
+  useEffect(() => {
+    drawVelocitySelector();
+  }, [drawVelocitySelector]);
+
+  const updateVelocityFromCanvasPointer = useCallback((event) => {
+    const canvas = velocitySelectorCanvasRef.current;
+    if (!canvas || !selectedWhatIfPlayer) return;
+
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const x = ((event.clientX - rect.left) / rect.width) * VELOCITY_SELECTOR_SIZE;
+    const y = ((event.clientY - rect.top) / rect.height) * VELOCITY_SELECTOR_SIZE;
+    const center = VELOCITY_SELECTOR_SIZE / 2;
+
+    const dx = x - center;
+    const dy = y - center;
+    const radius = Math.sqrt(dx * dx + dy * dy);
+    const clampedRadius = Math.min(VELOCITY_SELECTOR_MAX_RADIUS, radius);
+    const vmax = Math.max(1e-6, selectedWhatIfPlayer.vmax || 7.0);
+
+    if (clampedRadius < 1e-6) {
+      setWhatIfVelocityOverrides((prev) => ({
+        ...prev,
+        [selectedWhatIfPlayer.player_id]: { vx: 0, vy: 0 },
+      }));
+      return;
+    }
+
+    const ux = dx / radius;
+    const uy = dy / radius;
+    const speed = (clampedRadius / VELOCITY_SELECTOR_MAX_RADIUS) * vmax;
+
+    setWhatIfVelocityOverrides((prev) => ({
+      ...prev,
+      [selectedWhatIfPlayer.player_id]: {
+        vx: ux * speed,
+        vy: -uy * speed,
+      },
+    }));
+  }, [selectedWhatIfPlayer]);
+
+  const handleVelocitySelectorMouseDown = useCallback((event) => {
+    if (!isWhatIfMode || !selectedWhatIfPlayer) return;
+    isVelocityDrawingRef.current = true;
+    updateVelocityFromCanvasPointer(event);
+  }, [isWhatIfMode, selectedWhatIfPlayer, updateVelocityFromCanvasPointer]);
+
+  const handleVelocitySelectorMouseMove = useCallback((event) => {
+    if (!isVelocityDrawingRef.current) return;
+    updateVelocityFromCanvasPointer(event);
+  }, [updateVelocityFromCanvasPointer]);
+
+  const handleVelocitySelectorMouseUp = useCallback(() => {
+    isVelocityDrawingRef.current = false;
+  }, []);
 
   const whatIfPitchControl = useMemo(() => {
     if (!isWhatIfMode) return null;
@@ -1248,6 +1414,9 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     if (selectedPlayerId !== null) {
       setDraggedPlayerId(selectedPlayerId);
+      setSelectedWhatIfPlayerId(selectedPlayerId);
+    } else {
+      setSelectedWhatIfPlayerId(null);
     }
   }, [isWhatIfMode, getCanvasCoordinates, whatIfPlayers, canvasHeight]);
 
@@ -1274,10 +1443,14 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   const handleResetWhatIfPositions = useCallback(() => {
     setDraggedPlayerId(null);
+    setSelectedWhatIfPlayerId(null);
     setWhatIfPlayerPositions({});
+    setWhatIfVelocityOverrides({});
   }, []);
 
-  const hasWhatIfOverrides = Object.keys(whatIfPlayerPositions).length > 0;
+  const hasWhatIfPositionOverrides = Object.keys(whatIfPlayerPositions).length > 0;
+  const hasWhatIfVelocityOverrides = Object.keys(whatIfVelocityOverrides).length > 0;
+  const hasWhatIfOverrides = hasWhatIfPositionOverrides || hasWhatIfVelocityOverrides;
 
   // Error state
   if (error && !useMockData) {
@@ -1543,6 +1716,35 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
             <span style={{fontSize: '24px', fontWeight: 'bold', color: '#7E6AE0', fontFamily: 'monospace'}}>{getMatchTime()}</span>
           </div>
         </div>
+
+        {isWhatIfMode && selectedWhatIfPlayer && (
+          <div style={styles.velocitySelectorCard}>
+            <span style={styles.velocitySelectorTitle}>Select Velocity</span>
+
+            <div style={styles.velocityCanvasWrap}>
+              <canvas
+                ref={velocitySelectorCanvasRef}
+                width={VELOCITY_SELECTOR_SIZE}
+                height={VELOCITY_SELECTOR_SIZE}
+                style={styles.velocityCanvas}
+                onMouseDown={handleVelocitySelectorMouseDown}
+                onMouseMove={handleVelocitySelectorMouseMove}
+                onMouseUp={handleVelocitySelectorMouseUp}
+                onMouseLeave={handleVelocitySelectorMouseUp}
+              />
+
+              <div
+                style={{
+                  ...styles.velocityCenterBadge,
+                  backgroundColor: getPlayerColors(selectedWhatIfPlayer).jerseyColor,
+                  color: getPlayerColors(selectedWhatIfPlayer).numberColor,
+                }}
+              >
+                {getPlayerNumber(selectedWhatIfPlayer)}
+              </div>
+            </div>
+          </div>
+        )}
 
         {!isWhatIfMode && (
           <>
@@ -2024,6 +2226,68 @@ const styles = {
     backgroundColor: '#adb5bd',
     cursor: 'not-allowed',
     opacity: 0.85,
+  },
+  velocitySelectorCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    border: '1px solid #dbe4ff',
+    backgroundColor: '#f1f5ff',
+    marginTop: '-4px',
+    marginBottom: '6px',
+  },
+  velocitySelectorTitle: {
+    fontSize: '11px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
+    color: '#5c677d',
+    fontWeight: '700',
+  },
+  velocityCanvasWrap: {
+    position: 'relative',
+    width: '100%',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: '4px 0',
+  },
+  velocityCanvas: {
+    width: '170px',
+    height: '170px',
+    borderRadius: '10px',
+    border: '1px solid #d1d9f2',
+    backgroundColor: '#ffffff',
+    cursor: 'crosshair',
+  },
+  velocityCenterBadge: {
+    position: 'absolute',
+    width: '30px',
+    height: '30px',
+    borderRadius: '50%',
+    border: '2px solid #334155',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: '700',
+    fontSize: '12px',
+    pointerEvents: 'none',
+  },
+  velocitySelectorFooter: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  velocitySelectorHint: {
+    fontSize: '12px',
+    color: '#334155',
+    fontWeight: '600',
+  },
+  velocitySelectorSpeed: {
+    fontSize: '12px',
+    color: '#1d4ed8',
+    fontWeight: '600',
   },
   title: {
     margin: '0 0 12px 0',
