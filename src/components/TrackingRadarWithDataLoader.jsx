@@ -315,7 +315,14 @@ const DEFAULT_PITCH_LENGTH_M = 104;
 const DEFAULT_PITCH_WIDTH_M = 68;
 
 // ========= PITCH RENDERER =========
-const drawPitch = (ctx, width, height, pitchColor = 'white') => {
+const drawPitch = (
+  ctx,
+  width,
+  height,
+  pitchColor = 'white',
+  pitchLengthM = DEFAULT_PITCH_LENGTH_M,
+  pitchWidthM = DEFAULT_PITCH_WIDTH_M
+) => {
   ctx.fillStyle = pitchColor;
   ctx.fillRect(0, 0, width, height);
 
@@ -343,20 +350,27 @@ const drawPitch = (ctx, width, height, pitchColor = 'white') => {
   ctx.arc(width / 2, height / 2, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Penalty boxes
-  const boxWidth = width * 0.22;
-  const boxHeight = height * 0.6;
+  // Penalty area and goal area in real dimensions (meters).
+  const pxPerMeterX = width / Math.max(1e-6, pitchLengthM);
+  const pxPerMeterY = height / Math.max(1e-6, pitchWidthM);
+
+  const penaltyDepthPx = 16.5 * pxPerMeterX;
+  const penaltyWidthPx = 40.32 * pxPerMeterY;
+  const goalAreaDepthPx = 5.5 * pxPerMeterX;
+  const goalAreaWidthPx = 18.32 * pxPerMeterY;
+
+  const penaltyTopY = (height - penaltyWidthPx) / 2;
+  const goalAreaTopY = (height - goalAreaWidthPx) / 2;
+
   ctx.strokeStyle = 'black';
   ctx.lineWidth = 2;
 
-  ctx.strokeRect(0, (height - boxHeight) / 2, boxWidth, boxHeight);
-  ctx.strokeRect(width - boxWidth, (height - boxHeight) / 2, boxWidth, boxHeight);
+  ctx.strokeRect(0, penaltyTopY, penaltyDepthPx, penaltyWidthPx);
+  ctx.strokeRect(width - penaltyDepthPx, penaltyTopY, penaltyDepthPx, penaltyWidthPx);
 
-  // Goal areas
-  const goalWidth = width * 0.08;
-  const goalHeight = height * 0.3;
-  ctx.strokeRect(0, (height - goalHeight) / 2, goalWidth, goalHeight);
-  ctx.strokeRect(width - goalWidth, (height - goalHeight) / 2, goalWidth, goalHeight);
+  // Goal area (small box)
+  ctx.strokeRect(0, goalAreaTopY, goalAreaDepthPx, goalAreaWidthPx);
+  ctx.strokeRect(width - goalAreaDepthPx, goalAreaTopY, goalAreaDepthPx, goalAreaWidthPx);
 };
 
 // ========= COORDINATE CONVERTER =========
@@ -1229,7 +1243,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     // Draw pitch
     const pitchBackgroundColor = selectedDashboard === 'physical' ? physicalColors.field : 'white';
-    drawPitch(ctx, CANVAS_WIDTH, canvasHeight, pitchBackgroundColor);
+    drawPitch(ctx, CANVAS_WIDTH, canvasHeight, pitchBackgroundColor, pitchLength, pitchWidth);
 
     // In Pitch Control dashboard, render controlled zones as background overlay.
     if (selectedDashboard === 'pitch-control') {
