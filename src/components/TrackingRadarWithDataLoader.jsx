@@ -306,6 +306,9 @@ const FPS = 10;
 const CANVAS_WIDTH = 800;
 const VELOCITY_SELECTOR_SIZE = 170;
 const VELOCITY_SELECTOR_MAX_RADIUS = 58;
+const WHAT_IF_ARROW_MAX_LENGTH_PX = 36;
+const WHAT_IF_ARROW_MIN_LENGTH_PX = 7;
+const WHAT_IF_ARROW_MAX_SPEED_MPS = 10.0;
 // Default pitch dimensions (will be overridden by match data)
 const DEFAULT_PITCH_LENGTH_M = 104;
 const DEFAULT_PITCH_WIDTH_M = 68;
@@ -361,6 +364,50 @@ const normalizedToPixels = (normX, normY, width, height) => {
   const x = Math.max(0, Math.min(normX, 1));
   const y = Math.max(0, Math.min(normY, 1));
   return [x * width, (1 - y) * height];
+};
+
+const drawVelocityVectorArrow = (ctx, startX, startY, vx, vy, color) => {
+  const speed = Math.sqrt(vx * vx + vy * vy);
+  if (!Number.isFinite(speed) || speed < 1e-3) return;
+
+  const ux = vx / speed;
+  const uy = vy / speed;
+  const speedRatio = clamp(speed / WHAT_IF_ARROW_MAX_SPEED_MPS, 0, 1);
+  const arrowLength = WHAT_IF_ARROW_MIN_LENGTH_PX + speedRatio * (WHAT_IF_ARROW_MAX_LENGTH_PX - WHAT_IF_ARROW_MIN_LENGTH_PX);
+
+  // Keep a small gap from the player badge.
+  const offset = 12;
+  const tailX = startX + ux * offset;
+  const tailY = startY - uy * offset;
+  const endX = tailX + ux * arrowLength;
+  const endY = tailY - uy * arrowLength;
+
+  ctx.save();
+  ctx.strokeStyle = color || 'rgba(15, 23, 42, 0.92)';
+  ctx.fillStyle = color || 'rgba(15, 23, 42, 0.92)';
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
+
+  ctx.beginPath();
+  ctx.moveTo(tailX, tailY);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+
+  const headLength = 7;
+  const angle = Math.atan2(endY - tailY, endX - tailX);
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(
+    endX - headLength * Math.cos(angle - Math.PI / 6),
+    endY - headLength * Math.sin(angle - Math.PI / 6)
+  );
+  ctx.lineTo(
+    endX - headLength * Math.cos(angle + Math.PI / 6),
+    endY - headLength * Math.sin(angle + Math.PI / 6)
+  );
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 };
 
 const decodeControlRleRows = (rleRows, widthCells, heightCells) => {
@@ -998,6 +1045,13 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     );
   }, [selectedWhatIfPlayer]);
 
+  const selectedWhatIfArrowColor = useMemo(() => {
+    if (!selectedWhatIfPlayer) return '#0b7285';
+    return selectedWhatIfPlayer.team_id === teamInfo.home_id
+      ? pitchControlColors.home
+      : pitchControlColors.away;
+  }, [selectedWhatIfPlayer, teamInfo.home_id, pitchControlColors.home, pitchControlColors.away]);
+
   const drawVelocitySelector = useCallback(() => {
     const canvas = velocitySelectorCanvasRef.current;
     if (!canvas) return;
@@ -1047,8 +1101,8 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     const endY = center - dirY * ratio * VELOCITY_SELECTOR_MAX_RADIUS;
 
     // Draw velocity arrow from player center.
-    ctx.strokeStyle = '#0b7285';
-    ctx.fillStyle = '#0b7285';
+    ctx.strokeStyle = selectedWhatIfArrowColor;
+    ctx.fillStyle = selectedWhatIfArrowColor;
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(center, center);
@@ -1069,7 +1123,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     );
     ctx.closePath();
     ctx.fill();
-  }, [selectedWhatIfPlayer]);
+  }, [selectedWhatIfPlayer, selectedWhatIfArrowColor]);
 
   useEffect(() => {
     drawVelocitySelector();
@@ -1176,6 +1230,19 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
       const [px, py] = normalizedToPixels(x, y, CANVAS_WIDTH, canvasHeight);
       const colors = getPlayerColors(player);
+
+      if (isWhatIfMode) {
+        const teamId = getPlayerTeamId(player);
+        const arrowColor = teamId === teamInfo.home_id ? pitchControlColors.home : pitchControlColors.away;
+        drawVelocityVectorArrow(
+          ctx,
+          px,
+          py,
+          Number(player.vx) || 0,
+          Number(player.vy) || 0,
+          arrowColor
+        );
+      }
 
       // Player circle with jersey color
       ctx.fillStyle = colors.jerseyColor;
