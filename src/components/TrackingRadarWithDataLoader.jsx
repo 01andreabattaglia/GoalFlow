@@ -206,6 +206,92 @@ const usePitchControlData = (filePath) => {
 };
 
 /**
+ * Hook to load pitch control sliding-window averages from JSONL.
+ */
+const usePitchControlSwAverageData = (filePath) => {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+
+        const lines = text.trim().split('\n').filter((line) => line.trim().length > 0);
+        const frames = lines
+          .map((line, idx) => {
+            try {
+              return JSON.parse(line);
+            } catch (e) {
+              console.warn(`Failed to parse pitch control SW average JSONL line ${idx}:`, e);
+              return null;
+            }
+          })
+          .filter((f) => f !== null);
+
+        setData(frames);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error loading pitch control SW average data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [filePath]);
+
+  return { data, loading, error };
+};
+
+/**
+ * Hook to load minute-control values from JSONL.
+ */
+const useMinuteControlData = (filePath) => {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+
+        const lines = text.trim().split('\n').filter((line) => line.trim().length > 0);
+        const rows = lines
+          .map((line, idx) => {
+            try {
+              return JSON.parse(line);
+            } catch (e) {
+              console.warn(`Failed to parse minute control JSONL line ${idx}:`, e);
+              return null;
+            }
+          })
+          .filter((r) => r !== null);
+
+        setData(rows);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error loading minute control data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [filePath]);
+
+  return { data, loading, error };
+};
+
+/**
  * Hook to load player max acceleration and speed parameters from CSV.
  */
 const usePlayerParams = (filePath) => {
@@ -494,6 +580,89 @@ const toRgba = (hex, alpha) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
 
+const hexToRgb = (hex) => {
+  if (typeof hex !== 'string' || !hex.startsWith('#')) return null;
+
+  const raw = hex.slice(1);
+  const full = raw.length === 3
+    ? raw.split('').map((c) => c + c).join('')
+    : raw;
+
+  if (full.length !== 6) return null;
+
+  return {
+    r: parseInt(full.slice(0, 2), 16),
+    g: parseInt(full.slice(2, 4), 16),
+    b: parseInt(full.slice(4, 6), 16),
+  };
+};
+
+const lerpColor = (start, end, t) => ({
+  r: Math.round(start.r + (end.r - start.r) * t),
+  g: Math.round(start.g + (end.g - start.g) * t),
+  b: Math.round(start.b + (end.b - start.b) * t),
+});
+
+const getPitchControlGradientColor = (value, colors, alpha = 0.9) => {
+  const clamped = clamp(Number(value) || 0, -1, 1);
+  const away = hexToRgb(colors.away) || { r: 255, g: 68, b: 68 };
+  const neutral = hexToRgb(colors.neutral) || { r: 215, g: 220, b: 232 };
+  const home = hexToRgb(colors.home) || { r: 30, g: 144, b: 255 };
+
+  let rgb;
+  if (clamped <= 0) {
+    const t = clamped + 1;
+    rgb = lerpColor(away, neutral, t);
+  } else {
+    rgb = lerpColor(neutral, home, clamped);
+  }
+
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+};
+
+const buildSwAverageByPeriod = (frames) => {
+  const byPeriod = new Map();
+  if (!Array.isArray(frames)) return byPeriod;
+
+  frames.forEach((frame) => {
+    if (!frame) return;
+    const period = Number(frame.period) || 0;
+    if (!byPeriod.has(period)) byPeriod.set(period, []);
+    byPeriod.get(period).push(frame);
+  });
+
+  byPeriod.forEach((periodFrames) => {
+    periodFrames.sort((a, b) => (Number(a.frame) || 0) - (Number(b.frame) || 0));
+  });
+
+  return byPeriod;
+};
+
+const findLastFrameAtOrBefore = (sortedFrames, targetFrame) => {
+  if (!Array.isArray(sortedFrames) || sortedFrames.length === 0) return null;
+
+  const target = Number(targetFrame);
+  if (!Number.isFinite(target)) return sortedFrames[sortedFrames.length - 1];
+
+  let left = 0;
+  let right = sortedFrames.length - 1;
+  let bestIdx = -1;
+
+  while (left <= right) {
+    const mid = Math.floor((left + right) / 2);
+    const value = Number(sortedFrames[mid]?.frame) || 0;
+    if (value <= target) {
+      bestIdx = mid;
+      left = mid + 1;
+    } else {
+      right = mid - 1;
+    }
+  }
+
+  if (bestIdx >= 0) return sortedFrames[bestIdx];
+  return sortedFrames[0];
+};
+
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const normalizedToPitchMeters = (normX, normY, pitchLength, pitchWidth) => ({
@@ -675,9 +844,208 @@ const drawPitchControlOverlay = (ctx, pitchControlFrame, width, height, controlC
   }
 };
 
+const drawPitchLinesOnly = (ctx, width, height, pitchLengthM = DEFAULT_PITCH_LENGTH_M, pitchWidthM = DEFAULT_PITCH_WIDTH_M) => {
+  ctx.strokeStyle = 'black';
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(width / 2, 0);
+  ctx.lineTo(width / 2, height);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(width / 2, height / 2, width * 0.1, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = 'black';
+  ctx.beginPath();
+  ctx.arc(width / 2, height / 2, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  const pxPerMeterX = width / Math.max(1e-6, pitchLengthM);
+  const pxPerMeterY = height / Math.max(1e-6, pitchWidthM);
+
+  const penaltyDepthPx = 16.5 * pxPerMeterX;
+  const penaltyWidthPx = 40.32 * pxPerMeterY;
+  const goalAreaDepthPx = 5.5 * pxPerMeterX;
+  const goalAreaWidthPx = 18.32 * pxPerMeterY;
+
+  const penaltyTopY = (height - penaltyWidthPx) / 2;
+  const goalAreaTopY = (height - goalAreaWidthPx) / 2;
+
+  ctx.strokeRect(0, penaltyTopY, penaltyDepthPx, penaltyWidthPx);
+  ctx.strokeRect(width - penaltyDepthPx, penaltyTopY, penaltyDepthPx, penaltyWidthPx);
+  ctx.strokeRect(0, goalAreaTopY, goalAreaDepthPx, goalAreaWidthPx);
+  ctx.strokeRect(width - goalAreaDepthPx, goalAreaTopY, goalAreaDepthPx, goalAreaWidthPx);
+};
+
+const drawSwAverageHeatmap = (ctx, swAverageFrame, width, height, colors, pitchLength, pitchWidth) => {
+  if (!swAverageFrame || !Array.isArray(swAverageFrame.control_avg_rows)) return;
+  const rows = swAverageFrame.control_avg_rows;
+  if (!rows.length) return;
+
+  const heightCells = rows.length;
+  const widthCells = rows.reduce((max, row) => {
+    if (!Array.isArray(row)) return max;
+    return Math.max(max, row.length);
+  }, 0);
+
+  if (!widthCells || !heightCells) return;
+
+  ctx.clearRect(0, 0, width, height);
+
+  const cellW = width / widthCells;
+  const cellH = height / heightCells;
+
+  for (let row = 0; row < heightCells; row++) {
+    const drawRow = heightCells - 1 - row;
+    const rowData = rows[row] || [];
+    for (let col = 0; col < widthCells; col++) {
+      const value = Number(rowData[col]) || 0;
+      ctx.fillStyle = getPitchControlGradientColor(value, colors, 0.9);
+      ctx.fillRect(col * cellW, drawRow * cellH, cellW, cellH);
+    }
+  }
+
+  drawPitchLinesOnly(ctx, width, height, pitchLength, pitchWidth);
+};
+
+const parseTimestampSecondsSafe = (timestamp) => {
+  if (!timestamp || typeof timestamp !== 'string') return 0;
+  const parts = timestamp.split(':');
+  if (parts.length !== 3) return 0;
+  const hours = Number(parts[0]) || 0;
+  const mins = Number(parts[1]) || 0;
+  const secs = Number(parts[2]) || 0;
+  return hours * 3600 + mins * 60 + secs;
+};
+
+const buildMinuteControlTimeline = (minuteRows) => {
+  if (!Array.isArray(minuteRows)) return [];
+
+  return minuteRows
+    .filter((row) => row && Number.isFinite(Number(row.minute_index)) && Number.isFinite(Number(row.period)))
+    .slice()
+    .sort((a, b) => {
+      const periodDiff = (Number(a.period) || 0) - (Number(b.period) || 0);
+      if (periodDiff !== 0) return periodDiff;
+      return (Number(a.minute_index) || 0) - (Number(b.minute_index) || 0);
+    });
+};
+
+const getVisibleMinuteControlRows = (timelineRows, currentPeriod, completedMinutes) => {
+  if (!Array.isArray(timelineRows) || completedMinutes <= 0) return [];
+
+  if (currentPeriod === 1) {
+    return timelineRows.filter((row) => Number(row.period) === 1 && Number(row.minute_index) < completedMinutes);
+  }
+
+  return timelineRows.filter((row) => {
+    const period = Number(row.period);
+    const minuteIdx = Number(row.minute_index);
+    if (period === 1) return true;
+    return period === 2 && minuteIdx < completedMinutes;
+  });
+};
+
+const drawMinuteControlHistogram = (ctx, width, height, visibleRows, totalSlots, secondHalfStartIdx, colors) => {
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  const marginLeft = 34;
+  const marginRight = 8;
+  const marginTop = 10;
+  const marginBottom = 22;
+  const chartW = Math.max(1, width - marginLeft - marginRight);
+  const chartH = Math.max(1, height - marginTop - marginBottom);
+  const x0 = marginLeft;
+  const y0 = marginTop;
+
+  const yForValue = (v) => y0 + ((1 - (v + 1) / 2) * chartH);
+  const yNeg1 = yForValue(-1);
+  const yZero = yForValue(0);
+  const yPos1 = yForValue(1);
+
+  ctx.strokeStyle = '#cfd6ea';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x0, yPos1);
+  ctx.lineTo(x0 + chartW, yPos1);
+  ctx.moveTo(x0, yZero);
+  ctx.lineTo(x0 + chartW, yZero);
+  ctx.moveTo(x0, yNeg1);
+  ctx.lineTo(x0 + chartW, yNeg1);
+  ctx.stroke();
+
+  const slots = Math.max(1, totalSlots);
+  const visibleCount = Array.isArray(visibleRows) ? visibleRows.length : 0;
+
+  if (visibleCount > 0) {
+    const slotW = chartW / slots;
+    const barW = Math.max(1, Math.min(12, slotW * 0.8));
+
+    for (let m = 0; m < visibleCount; m++) {
+      const row = visibleRows[m];
+      const value = clamp(Number(row?.minute_control) || 0, -1, 1);
+      const cx = x0 + m * slotW + slotW / 2;
+      const x = cx - barW / 2;
+
+      if (value >= 0) {
+        const yTop = yForValue(value);
+        const h = Math.max(1, yZero - yTop);
+        ctx.fillStyle = toRgba(colors.home, 0.95);
+        ctx.fillRect(x, yTop, barW, h);
+      } else {
+        const yBottom = yForValue(value);
+        const h = Math.max(1, yBottom - yZero);
+        ctx.fillStyle = toRgba(colors.away, 0.95);
+        ctx.fillRect(x, yZero, barW, h);
+      }
+    }
+  }
+
+  ctx.strokeStyle = '#7a879f';
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x0, y0 + chartH);
+  ctx.lineTo(x0 + chartW, y0 + chartH);
+  ctx.stroke();
+
+  ctx.fillStyle = '#5a6784';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('1', x0 - 6, yPos1);
+  ctx.fillText('0', x0 - 6, yZero);
+  ctx.fillText('-1', x0 - 6, yNeg1);
+
+  if (slots > 0 && Number.isFinite(secondHalfStartIdx) && secondHalfStartIdx > 0 && secondHalfStartIdx < slots) {
+    const xSecondHalf = x0 + (secondHalfStartIdx / slots) * chartW;
+    ctx.strokeStyle = '#8c99b8';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xSecondHalf, y0 + chartH);
+    ctx.lineTo(xSecondHalf, y0 + chartH + 5);
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#5a6784';
+    ctx.fillText('2T', xSecondHalf, y0 + chartH + 6);
+  }
+};
+
 // ========= MAIN COMPONENT =========
 const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const canvasRef = useRef(null);
+  const bottomPitchCanvasRef = useRef(null);
+  const minuteControlCanvasRef = useRef(null);
   const [timeSeconds, setTimeSeconds] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedDashboard, setSelectedDashboard] = useState('physical');
@@ -716,6 +1084,8 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Load pitch control data
   const { data: pitchControlData } = usePitchControlData('/data/1886347_pitch_control.jsonl');
+  const { data: pitchControlSwAverageData } = usePitchControlSwAverageData('/data/1886347_pitch_control_sw_average.jsonl');
+  const { data: minuteControlData } = useMinuteControlData('/data/1886347_pitch_control_minute_control.jsonl');
 
   // Load video sync data
   const { syncData } = useVideoSyncData('/data/video_sync.json');
@@ -731,6 +1101,10 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
   // Calculate canvas height based on pitch proportions
   const canvasHeight = Math.round(CANVAS_WIDTH * (pitchWidth / pitchLength));
+  const bottomPitchCanvasHeight = 220;
+  const bottomPitchCanvasWidth = Math.round(bottomPitchCanvasHeight * (pitchLength / pitchWidth));
+  const minuteControlCanvasHeight = 170;
+  const minuteControlCanvasWidth = 360;
 
   // Load real data or use mock with correct pitch dimensions
   const { data: loadedData, loading, error } = useTrackingData(dataPath || '/data/1886347_tracking_extrapolated.jsonl', pitchLength, pitchWidth);
@@ -839,6 +1213,108 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
     return best;
   }, [pitchControlData, currentFrame]);
+
+  const pitchControlSwAverageByPeriod = useMemo(() => {
+    return buildSwAverageByPeriod(pitchControlSwAverageData);
+  }, [pitchControlSwAverageData]);
+
+  const currentPitchControlSwAverageFrame = useMemo(() => {
+    if (!pitchControlSwAverageByPeriod.size) return null;
+
+    const syncPeriod = Number(currentPitchControlFrame?.period ?? currentFrame.period ?? 0) || 0;
+    const syncFrame = Number(currentPitchControlFrame?.frame ?? currentFrame.frameNumber ?? currentFrame.frame ?? 0) || 0;
+
+    const periodFrames = pitchControlSwAverageByPeriod.get(syncPeriod);
+    if (periodFrames && periodFrames.length > 0) {
+      return findLastFrameAtOrBefore(periodFrames, syncFrame);
+    }
+
+    const fallbackFrames = Array.from(pitchControlSwAverageByPeriod.values())[0] || [];
+    return findLastFrameAtOrBefore(fallbackFrames, syncFrame);
+  }, [pitchControlSwAverageByPeriod, currentPitchControlFrame, currentFrame]);
+
+  useEffect(() => {
+    if (isWhatIfSimulationOpen) return;
+    if (selectedDashboard !== 'pitch-control') return;
+    const canvas = bottomPitchCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!currentPitchControlSwAverageFrame) {
+      drawPitch(ctx, canvas.width, canvas.height, '#ffffff', pitchLength, pitchWidth);
+      return;
+    }
+
+    drawSwAverageHeatmap(
+      ctx,
+      currentPitchControlSwAverageFrame,
+      canvas.width,
+      canvas.height,
+      pitchControlColors,
+      pitchLength,
+      pitchWidth,
+    );
+  }, [
+    selectedDashboard,
+    isWhatIfSimulationOpen,
+    currentPitchControlSwAverageFrame,
+    pitchControlColors,
+    pitchLength,
+    pitchWidth,
+  ]);
+
+  const completedMinutesCount = useMemo(() => {
+    const referenceTimestamp = currentPitchControlFrame?.timestamp || currentFrame.timestamp;
+    const seconds = parseTimestampSecondsSafe(referenceTimestamp);
+    return Math.max(0, Math.floor(seconds / 60));
+  }, [currentPitchControlFrame, currentFrame]);
+
+  const minuteControlTimeline = useMemo(() => {
+    return buildMinuteControlTimeline(minuteControlData);
+  }, [minuteControlData]);
+
+  const visibleMinuteControlRows = useMemo(() => {
+    const currentPeriod = Number(currentPitchControlFrame?.period ?? currentFrame.period ?? 1) || 1;
+    return getVisibleMinuteControlRows(minuteControlTimeline, currentPeriod, completedMinutesCount);
+  }, [minuteControlTimeline, currentPitchControlFrame, currentFrame, completedMinutesCount]);
+
+  const totalMinuteControlSlots = useMemo(() => minuteControlTimeline.length, [minuteControlTimeline]);
+
+  const secondHalfStartIdx = useMemo(() => {
+    const idx = minuteControlTimeline.findIndex((row) => Number(row.period) === 2);
+    return idx >= 0 ? idx : -1;
+  }, [minuteControlTimeline]);
+
+  useEffect(() => {
+    if (isWhatIfSimulationOpen) return;
+    if (selectedDashboard !== 'pitch-control') return;
+    const canvas = minuteControlCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    drawMinuteControlHistogram(
+      ctx,
+      canvas.width,
+      canvas.height,
+      visibleMinuteControlRows,
+      totalMinuteControlSlots,
+      secondHalfStartIdx,
+      pitchControlColors,
+    );
+  }, [
+    selectedDashboard,
+    isWhatIfSimulationOpen,
+    visibleMinuteControlRows,
+    totalMinuteControlSlots,
+    secondHalfStartIdx,
+    pitchControlColors,
+  ]);
 
   // Calculate synchronized video time from radar timestamp
   const calculateSyncedVideoTime = useCallback(() => {
@@ -1721,77 +2197,113 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
               </div>
             </div>
 
-            {/* Bottom Row - Full Width Table */}
+            {/* Bottom Row - Full Width */}
             <div style={styles.bottomRow}>
-              <div style={styles.tableContainer}>
-                <div style={styles.tableWrapper}>
-                  <table style={styles.table}>
-                    <thead>
-                      <tr style={styles.tableHeader}>
-                        <th style={styles.tableHeaderCell}>Stato</th>
-                        <th style={styles.tableHeaderCell}>#</th>
-                        <th style={styles.tableHeaderCell}>Nome</th>
-                        <th style={styles.tableHeaderCell}>Ruolo</th>
-                        <th style={styles.tableHeaderCell}>Min Giocati</th>
-                        <th style={styles.tableHeaderCell}>Distanza (km)</th>
-                        <th style={styles.tableHeaderCell}>Velocità (km/h)</th>
-                        <th style={styles.tableHeaderCell}>Sprinting (min)</th>
-                        <th style={styles.tableHeaderCell}>Jogging (min)</th>
-                        <th style={styles.tableHeaderCell}>Walking (min)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
-                        if (!player) return null;
-                        return (
-                        <tr key={idx} style={styles.tableRow}>
-                          <td style={{
-                            ...styles.tableCell,
-                            backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
-                            fontWeight: 'bold',
-                          }}>
-                            {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
-                          </td>
-                          <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                            <div
-                              style={{
-                                width: '28px',
-                                height: '28px',
-                                borderRadius: '50%',
-                                backgroundColor: player.jersey_color || '#000000',
-                                border: '2px solid #333',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                color: player.number_color || '#ffffff',
-                                fontWeight: 'bold',
-                                fontSize: '13px',
-                              }}
-                            >
-                              {player.number}
-                            </div>
-                          </td>
-                          <td style={styles.tableCell}>{player.name || 'N/A'}</td>
-                          <td style={styles.tableCell}>{player.role || 'N/A'}</td>
-                          <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
-                          <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
-                          <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
-                          <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
-                          <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
-                          <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
-                        </tr>
-                        );
-                      }) : (
-                        <tr>
-                          <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
-                            Caricamento dati...
-                          </td>
-                        </tr>
+              {selectedDashboard === 'pitch-control' ? (
+                <div style={styles.pitchControlBottomGrid}>
+                  <div style={styles.pitchControlBottomPane}>
+                    <div style={styles.bottomPaneTitle}>Average Pitch Control (Last 10 Minutes)</div>
+                    <div style={styles.bottomHeatmapContainer}>
+                      <canvas
+                        ref={bottomPitchCanvasRef}
+                        width={bottomPitchCanvasWidth}
+                        height={bottomPitchCanvasHeight}
+                        style={styles.bottomPitchCanvas}
+                      />
+                      {!currentPitchControlSwAverageFrame && (
+                        <div style={styles.heatmapStatusText}>No SW average frame found for current period/timestamp</div>
                       )}
-                    </tbody>
-                  </table>
+                    </div>
+                  </div>
+
+                  <div style={styles.pitchControlBottomPane}>
+                    <div style={styles.bottomPaneTitle}>Attack Momentum</div>
+                    <div style={styles.minuteControlContainer}>
+                      <canvas
+                        ref={minuteControlCanvasRef}
+                        width={minuteControlCanvasWidth}
+                        height={minuteControlCanvasHeight}
+                        style={styles.minuteControlCanvas}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={styles.pitchControlBottomPane}>
+                    <div style={styles.bottomPaneTitle}>Panel 3</div>
+                    <div style={styles.bottomPanePlaceholder}>Reserved area</div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={styles.tableContainer}>
+                  <div style={styles.tableWrapper}>
+                    <table style={styles.table}>
+                      <thead>
+                        <tr style={styles.tableHeader}>
+                          <th style={styles.tableHeaderCell}>Stato</th>
+                          <th style={styles.tableHeaderCell}>#</th>
+                          <th style={styles.tableHeaderCell}>Nome</th>
+                          <th style={styles.tableHeaderCell}>Ruolo</th>
+                          <th style={styles.tableHeaderCell}>Min Giocati</th>
+                          <th style={styles.tableHeaderCell}>Distanza (km)</th>
+                          <th style={styles.tableHeaderCell}>Velocita (km/h)</th>
+                          <th style={styles.tableHeaderCell}>Sprinting (min)</th>
+                          <th style={styles.tableHeaderCell}>Jogging (min)</th>
+                          <th style={styles.tableHeaderCell}>Walking (min)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {enrichedPlayersData && enrichedPlayersData.length > 0 ? enrichedPlayersData.map((player, idx) => {
+                          if (!player) return null;
+                          return (
+                          <tr key={idx} style={styles.tableRow}>
+                            <td style={{
+                              ...styles.tableCell,
+                              backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
+                              fontWeight: 'bold',
+                            }}>
+                              {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
+                            </td>
+                            <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                              <div
+                                style={{
+                                  width: '28px',
+                                  height: '28px',
+                                  borderRadius: '50%',
+                                  backgroundColor: player.jersey_color || '#000000',
+                                  border: '2px solid #333',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  color: player.number_color || '#ffffff',
+                                  fontWeight: 'bold',
+                                  fontSize: '13px',
+                                }}
+                              >
+                                {player.number}
+                              </div>
+                            </td>
+                            <td style={styles.tableCell}>{player.name || 'N/A'}</td>
+                            <td style={styles.tableCell}>{player.role || 'N/A'}</td>
+                            <td style={styles.tableCell}>{formatMinutesPlayed(player.minutes_played)}</td>
+                            <td style={styles.tableCell}>{player.distance_cumulated || '0'}</td>
+                            <td style={styles.tableCell}>{player.velocity_kmh || '--'}</td>
+                            <td style={styles.tableCell}>{player.sprinting_time || '00:00'}</td>
+                            <td style={styles.tableCell}>{player.jogging_time || '00:00'}</td>
+                            <td style={styles.tableCell}>{player.walking_time || '00:00'}</td>
+                          </tr>
+                          );
+                        }) : (
+                          <tr>
+                            <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
+                              Caricamento dati...
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -2141,7 +2653,9 @@ const styles = {
     backgroundColor: '#C7CEF8',
     minHeight: '100vh',
     fontFamily: 'system-ui, -apple-system, sans-serif',
-    height: '100%',
+    height: '100vh',
+    boxSizing: 'border-box',
+    overflow: 'hidden',
   },
   leftPanel: {
     flex: 1,
@@ -2235,9 +2749,9 @@ const styles = {
     backgroundColor: 'white',
     borderRadius: '8px',
     boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-    padding: '20px',
-    minHeight: '200px',
-    maxHeight: '300px',
+    padding: '12px',
+    height: '300px',
+    flexShrink: 0,
   },
   tableContainer: {
     display: 'flex',
@@ -2286,6 +2800,88 @@ const styles = {
     padding: '4px 8px',
     borderRight: '1px solid #e0e0e0',
     fontSize: '13px',
+  },
+  bottomHeatmapContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    height: '100%',
+    flex: 1,
+    gap: '8px',
+    minHeight: 0,
+  },
+  pitchControlBottomGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gap: '8px',
+    width: '100%',
+    height: '100%',
+  },
+  pitchControlBottomPane: {
+    border: '1px solid #e1e5f2',
+    borderRadius: '8px',
+    backgroundColor: '#f9fbff',
+    padding: '6px',
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    minHeight: 0,
+  },
+  bottomPaneTitle: {
+    fontSize: '12px',
+    fontWeight: '700',
+    color: '#39476e',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+    marginBottom: '4px',
+    flexShrink: 0,
+    textAlign: 'center',
+  },
+  bottomPanePlaceholder: {
+    flex: 1,
+    border: '1px dashed #c6cee3',
+    borderRadius: '6px',
+    backgroundColor: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '12px',
+    color: '#8390b4',
+    fontWeight: '600',
+  },
+  minuteControlContainer: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  minuteControlCanvas: {
+    border: '1px solid #c8d0e6',
+    borderRadius: '6px',
+    backgroundColor: '#ffffff',
+    width: '100%',
+    height: '170px',
+    maxWidth: '100%',
+    maxHeight: '170px',
+    display: 'block',
+  },
+  bottomPitchCanvas: {
+    border: '1px solid #333',
+    borderRadius: '4px',
+    maxHeight: '100%',
+    height: '100%',
+    width: 'auto',
+    maxWidth: '100%',
+    backgroundColor: '#ffffff',
+    objectFit: 'contain',
+  },
+  heatmapStatusText: {
+    fontSize: '12px',
+    color: '#666',
+    fontWeight: '600',
   },
   canvas: {
     border: '2px solid #333',

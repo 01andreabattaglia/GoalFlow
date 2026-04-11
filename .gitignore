@@ -1,9 +1,7 @@
 node_modules/
 dist/
 build/
-public/data/1886347_enriched_tracking.jsonl
-public/data/1886347_pitch_control.jsonl
-public/data/Isuzu UTE A-League 2024-25 - Round 6 - Auckland FC v Newcastle Jets.mp4
+public/data/
 .env
 .env.local
 .DS_Store
