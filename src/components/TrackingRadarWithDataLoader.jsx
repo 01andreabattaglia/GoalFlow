@@ -305,9 +305,10 @@ const generateMockData = (frameCount = 250) => {
 const FPS = 10;
 const CANVAS_WIDTH = 800;
 const VELOCITY_SELECTOR_SIZE = 170;
-const VELOCITY_SELECTOR_MAX_RADIUS = 58;
+const VELOCITY_SELECTOR_MAX_RADIUS = 74;
+const WALKING_TO_JOGGING_MPS = 7 / 3.6;
+const JOGGING_TO_SPRINTING_MPS = 15 / 3.6;
 const WHAT_IF_ARROW_MAX_LENGTH_PX = 36;
-const WHAT_IF_ARROW_MIN_LENGTH_PX = 7;
 const WHAT_IF_ARROW_MAX_SPEED_MPS = 10.0;
 // Default pitch dimensions (will be overridden by match data)
 const DEFAULT_PITCH_LENGTH_M = 104;
@@ -373,7 +374,8 @@ const drawVelocityVectorArrow = (ctx, startX, startY, vx, vy, color) => {
   const ux = vx / speed;
   const uy = vy / speed;
   const speedRatio = clamp(speed / WHAT_IF_ARROW_MAX_SPEED_MPS, 0, 1);
-  const arrowLength = WHAT_IF_ARROW_MIN_LENGTH_PX + speedRatio * (WHAT_IF_ARROW_MAX_LENGTH_PX - WHAT_IF_ARROW_MIN_LENGTH_PX);
+  const arrowLength = speedRatio * WHAT_IF_ARROW_MAX_LENGTH_PX;
+  if (arrowLength < 0.8) return;
 
   // Keep a small gap from the player badge.
   const offset = 12;
@@ -393,7 +395,7 @@ const drawVelocityVectorArrow = (ctx, startX, startY, vx, vy, color) => {
   ctx.lineTo(endX, endY);
   ctx.stroke();
 
-  const headLength = 7;
+  const headLength = Math.max(2.5, Math.min(7, arrowLength * 0.45));
   const angle = Math.atan2(endY - tailY, endX - tailX);
   ctx.beginPath();
   ctx.moveTo(endX, endY);
@@ -1045,6 +1047,10 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     );
   }, [selectedWhatIfPlayer]);
 
+  const selectedWhatIfSpeedKmh = useMemo(() => {
+    return (selectedWhatIfSpeed * 3.6).toFixed(1);
+  }, [selectedWhatIfSpeed]);
+
   const selectedWhatIfArrowColor = useMemo(() => {
     if (!selectedWhatIfPlayer) return '#0b7285';
     return selectedWhatIfPlayer.team_id === teamInfo.home_id
@@ -1087,6 +1093,21 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     if (!selectedWhatIfPlayer) return;
 
     const vmax = Math.max(1e-6, selectedWhatIfPlayer.vmax || 7.0);
+    const walkJogRadius = Math.min(1, WALKING_TO_JOGGING_MPS / vmax) * VELOCITY_SELECTOR_MAX_RADIUS;
+    const jogSprintRadius = Math.min(1, JOGGING_TO_SPRINTING_MPS / vmax) * VELOCITY_SELECTOR_MAX_RADIUS;
+
+    // Two inner concentric rings for movement class transitions.
+    ctx.strokeStyle = 'rgba(100, 116, 139, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(center, center, walkJogRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(center, center, jogSprintRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
     const speed = Math.sqrt(
       selectedWhatIfPlayer.vx * selectedWhatIfPlayer.vx +
       selectedWhatIfPlayer.vy * selectedWhatIfPlayer.vy
@@ -1786,7 +1807,10 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
         {isWhatIfMode && selectedWhatIfPlayer && (
           <div style={styles.velocitySelectorCard}>
-            <span style={styles.velocitySelectorTitle}>Select Velocity</span>
+            <div style={styles.velocitySelectorHeader}>
+              <span style={styles.velocitySelectorTitle}>Select Velocity</span>
+              <span style={styles.velocitySelectorSpeedValue}>{selectedWhatIfSpeedKmh} km/h</span>
+            </div>
 
             <div style={styles.velocityCanvasWrap}>
               <canvas
@@ -2311,6 +2335,18 @@ const styles = {
     letterSpacing: '0.4px',
     color: '#5c677d',
     fontWeight: '700',
+  },
+  velocitySelectorHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+  },
+  velocitySelectorSpeedValue: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#334155',
+    fontFamily: 'monospace',
   },
   velocityCanvasWrap: {
     position: 'relative',
