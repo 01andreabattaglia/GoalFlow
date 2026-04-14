@@ -2202,6 +2202,18 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
               {selectedDashboard === 'pitch-control' ? (
                 <div style={styles.pitchControlBottomGrid}>
                   <div style={styles.pitchControlBottomPane}>
+                    <div style={styles.bottomPaneTitle}>Attack Momentum</div>
+                    <div style={styles.minuteControlContainer}>
+                      <canvas
+                        ref={minuteControlCanvasRef}
+                        width={minuteControlCanvasWidth}
+                        height={minuteControlCanvasHeight}
+                        style={styles.minuteControlCanvas}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={styles.pitchControlBottomPane}>
                     <div style={styles.bottomPaneTitle}>Average Pitch Control (Last 10 Minutes)</div>
                     <div style={styles.bottomHeatmapContainer}>
                       <canvas
@@ -2217,18 +2229,6 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                   </div>
 
                   <div style={styles.pitchControlBottomPane}>
-                    <div style={styles.bottomPaneTitle}>Attack Momentum</div>
-                    <div style={styles.minuteControlContainer}>
-                      <canvas
-                        ref={minuteControlCanvasRef}
-                        width={minuteControlCanvasWidth}
-                        height={minuteControlCanvasHeight}
-                        style={styles.minuteControlCanvas}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={styles.pitchControlBottomPane}>
                     <div style={styles.bottomPaneTitle}>Panel 3</div>
                     <div style={styles.bottomPanePlaceholder}>Reserved area</div>
                   </div>
@@ -2239,13 +2239,13 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                     <table style={styles.table}>
                       <thead>
                         <tr style={styles.tableHeader}>
-                          <th style={styles.tableHeaderCell}>Stato</th>
+                          <th style={styles.tableHeaderCell}>Status</th>
                           <th style={styles.tableHeaderCell}>#</th>
-                          <th style={styles.tableHeaderCell}>Nome</th>
-                          <th style={styles.tableHeaderCell}>Ruolo</th>
-                          <th style={styles.tableHeaderCell}>Min Giocati</th>
-                          <th style={styles.tableHeaderCell}>Distanza (km)</th>
-                          <th style={styles.tableHeaderCell}>Velocita (km/h)</th>
+                          <th style={styles.tableHeaderCell}>Name</th>
+                          <th style={styles.tableHeaderCell}>Role</th>
+                          <th style={styles.tableHeaderCell}>Minutes Played</th>
+                          <th style={styles.tableHeaderCell}>Distance (km)</th>
+                          <th style={styles.tableHeaderCell}>Speed (km/h)</th>
                           <th style={styles.tableHeaderCell}>Sprinting (min)</th>
                           <th style={styles.tableHeaderCell}>Jogging (min)</th>
                           <th style={styles.tableHeaderCell}>Walking (min)</th>
@@ -2261,7 +2261,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                               backgroundColor: player.status === 'playing' ? '#90EE90' : player.status === 'substituted' ? '#FFB6C1' : '#D3D3D3',
                               fontWeight: 'bold',
                             }}>
-                              {player.status === 'playing' ? '🟢 In campo' : player.status === 'substituted' ? '🔴 Sostituito' : '⚫ Panchina'}
+                              {player.status === 'playing' ? '🟢 On Pitch' : player.status === 'substituted' ? '🔴 Substituted' : '⚫ Bench'}
                             </td>
                             <td style={{...styles.tableCell, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
                               <div
@@ -2295,7 +2295,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                         }) : (
                           <tr>
                             <td colSpan="10" style={{...styles.tableCell, textAlign: 'center'}}>
-                              Caricamento dati...
+                              Loading data...
                             </td>
                           </tr>
                         )}
@@ -2480,7 +2480,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
           {selectedDashboard === 'physical' && (
             <div style={styles.pitchLegendPanel}>
-              <span style={styles.pitchLegendTitle}>Legenda Colori Physical</span>
+              <span style={styles.pitchLegendTitle}>Physical Color Legend</span>
 
               <div style={styles.pitchLegendRow}>
                 <div
@@ -2530,7 +2530,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                     borderColor: physicalColors.field,
                   }}
                 />
-                <span style={styles.pitchLegendLabel}>Colore Campo</span>
+                <span style={styles.pitchLegendLabel}>Pitch Color</span>
                 <input
                   type="color"
                   value={physicalColors.field}
@@ -2546,7 +2546,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
 
           {selectedDashboard === 'pitch-control' && (
             <div style={styles.pitchLegendPanel}>
-              <span style={styles.pitchLegendTitle}>Legenda Aree</span>
+              <span style={styles.pitchLegendTitle}>Area Legend</span>
 
               <div style={styles.pitchLegendRow}>
                 <div
@@ -2596,7 +2596,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                     borderColor: pitchControlColors.neutral,
                   }}
                 />
-                <span style={styles.pitchLegendLabel}>Zona Neutra</span>
+                <span style={styles.pitchLegendLabel}>Neutral Zone</span>
                 <input
                   type="color"
                   value={pitchControlColors.neutral}
