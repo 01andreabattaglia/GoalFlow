@@ -292,6 +292,49 @@ const useMinuteControlData = (filePath) => {
 };
 
 /**
+ * Hook to load ball touch-map snapshots from JSONL.
+ */
+const useBallTouchMapData = (filePath) => {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const response = await fetch(filePath);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+
+        const lines = text.trim().split('\n').filter((line) => line.trim().length > 0);
+        const rows = lines
+          .map((line, idx) => {
+            try {
+              return JSON.parse(line);
+            } catch (e) {
+              console.warn(`Failed to parse ball touch map JSONL line ${idx}:`, e);
+              return null;
+            }
+          })
+          .filter((r) => r !== null);
+
+        setData(rows);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+        console.error('Error loading ball touch map data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+  }, [filePath]);
+
+  return { data, loading, error };
+};
+
+/**
  * Hook to load player max acceleration and speed parameters from CSV.
  */
 const usePlayerParams = (filePath) => {
@@ -914,6 +957,100 @@ const drawSwAverageHeatmap = (ctx, swAverageFrame, width, height, colors, pitchL
   drawPitchLinesOnly(ctx, width, height, pitchLength, pitchWidth);
 };
 
+const smoothCountsGrid = (gridRows) => {
+  const h = Array.isArray(gridRows) ? gridRows.length : 0;
+  if (!h) return [];
+
+  const w = gridRows.reduce((max, row) => {
+    if (!Array.isArray(row)) return max;
+    return Math.max(max, row.length);
+  }, 0);
+  if (!w) return [];
+
+  const src = Array.from({ length: h }, (_, r) =>
+    Array.from({ length: w }, (_, c) => Math.max(0, Number(gridRows[r]?.[c]) || 0))
+  );
+
+  const kernel = [1, 2, 3, 2, 1];
+  const kRadius = 2;
+  const kNorm = 9;
+
+  const tmp = Array.from({ length: h }, () => Array.from({ length: w }, () => 0));
+  const out = Array.from({ length: h }, () => Array.from({ length: w }, () => 0));
+
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      let acc = 0;
+      for (let k = -kRadius; k <= kRadius; k++) {
+        const cc = c + k;
+        if (cc < 0 || cc >= w) continue;
+        acc += src[r][cc] * kernel[k + kRadius];
+      }
+      tmp[r][c] = acc / kNorm;
+    }
+  }
+
+  for (let r = 0; r < h; r++) {
+    for (let c = 0; c < w; c++) {
+      let acc = 0;
+      for (let k = -kRadius; k <= kRadius; k++) {
+        const rr = r + k;
+        if (rr < 0 || rr >= h) continue;
+        acc += tmp[rr][c] * kernel[k + kRadius];
+      }
+      out[r][c] = acc / kNorm;
+    }
+  }
+
+  return out;
+};
+
+const drawBallTouchHeatmap = (ctx, frame, width, height, pitchLength, pitchWidth) => {
+  const rows = frame?.touch_count_rows;
+  if (!Array.isArray(rows) || !rows.length) return;
+
+  const smoothed = smoothCountsGrid(rows);
+  const heightCells = smoothed.length;
+  const widthCells = smoothed.reduce((max, row) => Math.max(max, row.length), 0);
+  if (!heightCells || !widthCells) return;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  let maxCount = 0;
+  for (let r = 0; r < heightCells; r++) {
+    for (let c = 0; c < widthCells; c++) {
+      const value = Number(smoothed[r]?.[c]) || 0;
+      if (value > maxCount) maxCount = value;
+    }
+  }
+
+  if (maxCount <= 0) {
+    drawPitchLinesOnly(ctx, width, height, pitchLength, pitchWidth);
+    return;
+  }
+
+  const cellW = width / widthCells;
+  const cellH = height / heightCells;
+
+  for (let row = 0; row < heightCells; row++) {
+    const drawRow = heightCells - 1 - row;
+    for (let col = 0; col < widthCells; col++) {
+      const value = Number(smoothed[row]?.[col]) || 0;
+      if (value <= 0) continue;
+
+      const t = clamp(value / maxCount, 0, 1);
+      const g = Math.round(255 * (1 - t));
+      const b = Math.round(255 * (1 - t));
+      ctx.fillStyle = `rgb(255, ${g}, ${b})`;
+      ctx.fillRect(col * cellW, drawRow * cellH, cellW, cellH);
+    }
+  }
+
+  drawPitchLinesOnly(ctx, width, height, pitchLength, pitchWidth);
+};
+
 const parseTimestampSecondsSafe = (timestamp) => {
   if (!timestamp || typeof timestamp !== 'string') return 0;
   const parts = timestamp.split(':');
@@ -1046,6 +1183,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const canvasRef = useRef(null);
   const bottomPitchCanvasRef = useRef(null);
   const minuteControlCanvasRef = useRef(null);
+  const ballTouchCanvasRef = useRef(null);
   const [timeSeconds, setTimeSeconds] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [selectedDashboard, setSelectedDashboard] = useState('physical');
@@ -1086,6 +1224,7 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const { data: pitchControlData } = usePitchControlData('/data/1886347_pitch_control.jsonl');
   const { data: pitchControlSwAverageData } = usePitchControlSwAverageData('/data/1886347_pitch_control_sw_average.jsonl');
   const { data: minuteControlData } = useMinuteControlData('/data/1886347_pitch_control_minute_control.jsonl');
+  const { data: ballTouchMapData } = useBallTouchMapData('/data/1886347_ball_touch_map_sw.jsonl');
 
   // Load video sync data
   const { syncData } = useVideoSyncData('/data/video_sync.json');
@@ -1105,6 +1244,8 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
   const bottomPitchCanvasWidth = Math.round(bottomPitchCanvasHeight * (pitchLength / pitchWidth));
   const minuteControlCanvasHeight = 170;
   const minuteControlCanvasWidth = 360;
+  const ballTouchCanvasHeight = 220;
+  const ballTouchCanvasWidth = Math.round(ballTouchCanvasHeight * (pitchLength / pitchWidth));
 
   // Load real data or use mock with correct pitch dimensions
   const { data: loadedData, loading, error } = useTrackingData(dataPath || '/data/1886347_tracking_extrapolated.jsonl', pitchLength, pitchWidth);
@@ -1233,6 +1374,25 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     return findLastFrameAtOrBefore(fallbackFrames, syncFrame);
   }, [pitchControlSwAverageByPeriod, currentPitchControlFrame, currentFrame]);
 
+  const ballTouchMapByPeriod = useMemo(() => {
+    return buildSwAverageByPeriod(ballTouchMapData);
+  }, [ballTouchMapData]);
+
+  const currentBallTouchMapFrame = useMemo(() => {
+    if (!ballTouchMapByPeriod.size) return null;
+
+    const syncPeriod = Number(currentPitchControlFrame?.period ?? currentFrame.period ?? 0) || 0;
+    const syncFrame = Number(currentPitchControlFrame?.frame ?? currentFrame.frameNumber ?? currentFrame.frame ?? 0) || 0;
+
+    const periodFrames = ballTouchMapByPeriod.get(syncPeriod);
+    if (periodFrames && periodFrames.length > 0) {
+      return findLastFrameAtOrBefore(periodFrames, syncFrame);
+    }
+
+    const fallbackFrames = Array.from(ballTouchMapByPeriod.values())[0] || [];
+    return findLastFrameAtOrBefore(fallbackFrames, syncFrame);
+  }, [ballTouchMapByPeriod, currentPitchControlFrame, currentFrame]);
+
   useEffect(() => {
     if (isWhatIfSimulationOpen) return;
     if (selectedDashboard !== 'pitch-control') return;
@@ -1314,6 +1474,36 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
     totalMinuteControlSlots,
     secondHalfStartIdx,
     pitchControlColors,
+  ]);
+
+  useEffect(() => {
+    if (isWhatIfSimulationOpen) return;
+    if (selectedDashboard !== 'pitch-control') return;
+    const canvas = ballTouchCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    if (!currentBallTouchMapFrame) {
+      drawPitch(ctx, canvas.width, canvas.height, '#ffffff', pitchLength, pitchWidth);
+      return;
+    }
+
+    drawBallTouchHeatmap(
+      ctx,
+      currentBallTouchMapFrame,
+      canvas.width,
+      canvas.height,
+      pitchLength,
+      pitchWidth,
+    );
+  }, [
+    selectedDashboard,
+    isWhatIfSimulationOpen,
+    currentBallTouchMapFrame,
+    pitchLength,
+    pitchWidth,
   ]);
 
   // Calculate synchronized video time from radar timestamp
@@ -2229,8 +2419,18 @@ const TrackingRadar = ({ dataPath = null, useMockData = false }) => {
                   </div>
 
                   <div style={styles.pitchControlBottomPane}>
-                    <div style={styles.bottomPaneTitle}>Panel 3</div>
-                    <div style={styles.bottomPanePlaceholder}>Reserved area</div>
+                    <div style={styles.bottomPaneTitle}>Ball Touch Map (Last 10 Minutes)</div>
+                    <div style={styles.bottomHeatmapContainer}>
+                      <canvas
+                        ref={ballTouchCanvasRef}
+                        width={ballTouchCanvasWidth}
+                        height={ballTouchCanvasHeight}
+                        style={styles.bottomPitchCanvas}
+                      />
+                      {!currentBallTouchMapFrame && (
+                        <div style={styles.heatmapStatusText}>No ball touch map found for current period/timestamp</div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : (
