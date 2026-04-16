@@ -21,11 +21,18 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
+
+# Allow importing project packages from src when running this file directly.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+	sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.pitch_control import compute_pitch_control_grid
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,78 +81,6 @@ def build_player_team_map(match: dict) -> Dict[int, int]:
 	return mapping
 
 
-def ball_time_to_cell(ball_x: float, ball_y: float, cell_x: float, cell_y: float, s_ball: float) -> float:
-	"""tb = distance(ball, cell) / s_ball."""
-	dx = cell_x - ball_x
-	dy = cell_y - ball_y
-	dist = math.sqrt(dx * dx + dy * dy)
-	if dist < 1e-9:
-		return 0.0
-	if s_ball <= 0:
-		return float("inf")
-	return dist / s_ball
-
-
-def player_time_to_cell(
-	px: float,
-	py: float,
-	vx: float,
-	vy: float,
-	cell_x: float,
-	cell_y: float,
-	a: float,
-	vmax: float,
-) -> float:
-	"""Arrival time tp using projected current velocity and piecewise acceleration model."""
-	dx = cell_x - px
-	dy = cell_y - py
-	d = math.sqrt(dx * dx + dy * dy)
-	if d < 1e-9:
-		return 0.0
-
-	if vmax <= 0 and a <= 0:
-		return float("inf")
-
-	ux = dx / d
-	uy = dy / d
-	v0 = max(0.0, vx * ux + vy * uy)
-
-	vmax = max(vmax, 1e-6)
-	if v0 > vmax:
-		v0 = vmax
-
-	if a <= 0:
-		# Degenerate case: no acceleration available, move at projected speed (bounded).
-		v_const = max(min(vmax, max(v0, 1e-6)), 1e-6)
-		return d / v_const
-
-	t_acc = max(0.0, (vmax - v0) / a)
-	d_acc = v0 * t_acc + 0.5 * a * t_acc * t_acc
-
-	if d <= d_acc:
-		disc = max(0.0, v0 * v0 + 2.0 * a * d)
-		return (-v0 + math.sqrt(disc)) / a
-
-	return t_acc + (d - d_acc) / vmax
-
-
-def classify_cell(th: float, ta: float, tb: float, eps: float) -> int:
-	"""Apply the exact classification rules requested by the user."""
-	if th < tb and ta < tb:
-		return 0
-	if th < tb < ta:
-		return 1
-	if ta < tb < th:
-		return -1
-	if tb < th and tb < ta:
-		if th + eps < ta:
-			return 1
-		if ta + eps < th:
-			return -1
-		return 0
-	return 0
-
-
 def encode_rle_rows(control: np.ndarray) -> List[List[List[int]]]:
 	rle_rows: List[List[List[int]]] = []
 	for i in range(control.shape[0]):
@@ -186,58 +121,6 @@ def get_period_for_frame(frame_idx: int, match: dict) -> int:
 	return 1
 
 
-def compute_pitch_control_grid(
-	players_on_field: List[dict],
-	ball_x: float,
-	ball_y: float,
-	match: dict,
-	args: argparse.Namespace,
-	home_team_id: int,
-	away_team_id: int,
-) -> np.ndarray:
-	pitch_length = float(match["pitch_length"])
-	pitch_width = float(match["pitch_width"])
-	cell_size = float(args.cell_size)
-
-	x_min = -pitch_length / 2.0
-	x_max = pitch_length / 2.0
-	y_min = -pitch_width / 2.0
-	y_max = pitch_width / 2.0
-
-	grid_width = int((x_max - x_min) / cell_size)
-	grid_height = int((y_max - y_min) / cell_size)
-	control = np.zeros((grid_height, grid_width), dtype=np.int8)
-
-	for i in range(grid_height):
-		for j in range(grid_width):
-			cell_x = x_min + (j + 0.5) * cell_size
-			cell_y = y_min + (i + 0.5) * cell_size
-
-			tb = ball_time_to_cell(ball_x, ball_y, cell_x, cell_y, args.s_ball)
-			th = float("inf")
-			ta = float("inf")
-
-			for p in players_on_field:
-				tp = player_time_to_cell(
-					px=p["x"],
-					py=p["y"],
-					vx=p["vx"],
-					vy=p["vy"],
-					cell_x=cell_x,
-					cell_y=cell_y,
-					a=p["accel"],
-					vmax=p["vmax"],
-				)
-				if p["team_id"] == home_team_id and tp < th:
-					th = tp
-				elif p["team_id"] == away_team_id and tp < ta:
-					ta = tp
-
-			control[i, j] = classify_cell(th, ta, tb, args.eps)
-
-	return control
-
-
 def process_tracking_file(
 	tracking_path: Path,
 	match: dict,
@@ -250,6 +133,8 @@ def process_tracking_file(
 ) -> None:
 	frames_written = 0
 	last_player_state: Dict[int, Tuple[float, float, int]] = {}
+	pitch_length = float(match["pitch_length"])
+	pitch_width = float(match["pitch_width"])
 
 	with tracking_path.open("r", encoding="utf-8") as in_f, output_path.open("w", encoding="utf-8") as out_f:
 		for line_idx, line in enumerate(in_f):
@@ -317,8 +202,11 @@ def process_tracking_file(
 				players_on_field=players_on_field,
 				ball_x=ball_x,
 				ball_y=ball_y,
-				match=match,
-				args=args,
+				pitch_length=pitch_length,
+				pitch_width=pitch_width,
+				cell_size=float(args.cell_size),
+				s_ball=float(args.s_ball),
+				eps=float(args.eps),
 				home_team_id=home_team_id,
 				away_team_id=away_team_id,
 			)
