@@ -1,19 +1,19 @@
 # Sport Tech Project
 
-Web app React + Vite per visualizzare tracking calcistico su radar 2D, video sincronizzato e dashboard analitiche (physical e pitch-control).
+A React + Vite web application for visualizing soccer tracking data on a 2D radar, synchronized video playback, and analytical dashboards (physical metrics and pitch control).
 
-## Avvio rapido
+## Quick Start
 
 ```bash
 npm install
 npm run dev
 ```
 
-Apri `http://localhost:5173`.
+Open `http://localhost:5173` in your browser.
 
-## Dati usati
+## Data Used
 
-I file principali sono in `public/data/`:
+The main files are located in `public/data/`:
 
 - `1886347_tracking_extrapolated.jsonl`
 - `1886347_enriched_tracking.jsonl`
@@ -24,23 +24,29 @@ I file principali sono in `public/data/`:
 - `1886347_match.json`
 - `video_sync.json`
 
-## Componenti principali
+## Key Components
 
-- `src/components/TrackingRadarWithDataLoader.jsx`: componente principale con canvas, controlli tempo, what-if e dashboard.
-- `src/components/VideoPlayer.jsx`: player video con sync su timestamp radar.
-- `src/components/TrackingRadar.jsx`: versione mock semplificata.
+- `src/components/TrackingRadarWithDataLoader.jsx`: Main dashboard component with 2D canvas, time controls, what-if analysis, and analytics visualizations.
+- `src/components/VideoPlayer.jsx`: Video player synchronized with tracking data timestamps.
+- `src/components/TrackingRadar.jsx`: Simplified mock visualization component.
 
-## Script utili
+## Utility Scripts
 
-Cartella `scripts/`:
+The `scripts/` folder contains:
 
-- calcolo pitch control
-- creazione enriched tracking
-- sincronizzazione timestamp video
-- export parametri velocita/accelerazione giocatori
+- Pitch control calculation
+- Enriched tracking data generation
+- Video timestamp synchronization
+- Player speed and acceleration metrics export
 
-## Note
+## Required Data for the Dashboard
 
-- FPS di default: `10`
-- Pitch di default: `104m x 68m`
-- Per dettagli: vedi documentazione in `docs/`
+To display the dashboard correctly you must run the scripts in the `scripts/` folder to generate the tracking and pitch-control files, and provide the match video synchronized with the tracking data. The tracking files and the video are not included in this repository (they are listed in `.gitignore`), so you need to obtain them separately and place them in `public/data/` using the filenames expected by the app (see the list in the "Data Used" section above).
+
+This project is designed to be easily extended to any match: once you provide the appropriate tracking files and a synchronized video, the dashboard can be used for other games with minimal changes.
+
+## Notes
+
+- Default FPS: `10`
+- Default pitch size: `104m × 68m`
+- For more details: see documentation in `docs/`
