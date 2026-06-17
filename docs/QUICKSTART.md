@@ -54,47 +54,10 @@ That's it - the component will:
 
 ---
 
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| npm not found | Install [Node.js](https://nodejs.org) |
-| Module errors | Run `npm install` |
-| Blank canvas | Check browser console (F12) |
-| Slow performance | Reduce `CANVAS_WIDTH`/`CANVAS_HEIGHT` |
-
----
-
 ## Files You Have
 
 - **TrackingRadar.jsx** - Simple mock-only version
 - **TrackingRadarWithDataLoader.jsx** - Full version (mock + real data)
 - **App.jsx** - Entry point (uses enhanced version)
-- **SETUP.md** - Detailed configuration guide
 - **README.md** - Full documentation
 
----
-
-## Next: Customize
-
-### Change colors (in TrackingRadarWithDataLoader.jsx)
-```javascript
-const circleColor = isHome ? '#1e90ff' : '#ff4444';  // Blue/Red
-const ballColor = '#ffff00';  // Yellow
-```
-
-### Change FPS
-```javascript
-const FPS = 25;  // If your data is 25fps
-```
-
-### Change canvas size
-```javascript
-const CANVAS_WIDTH = 900;  // Bigger visualization
-const CANVAS_HEIGHT = 900;
-```
-
----
-
-**Everything ready to go! 🚀**  
-See README.md for advanced options and deployment.

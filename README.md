@@ -2,7 +2,41 @@
 
 A React + Vite web application for visualizing soccer tracking data on a 2D radar, synchronized video playback, and analytical dashboards (physical metrics and pitch control).
 
-## Quick Start
+## Key Components
+
+- `src/components/TrackingRadarWithDataLoader.jsx`: Main dashboard component with 2D canvas, time controls, what-if analysis, and analytics visualizations.
+- `src/components/VideoPlayer.jsx`: Video player synchronized with tracking data timestamps.
+- `src/components/TrackingRadar.jsx`: Simplified mock visualization component.
+
+## Data Used
+
+The main files are located in `public/data/`:
+
+- `1886347_tracking_extrapolated.jsonl`
+- `1886347_player_max_speed_accel.csv`
+- `1886347_match.json`
+- `video_sync.json`
+
+## Required Data for the Dashboard
+
+To display the dashboard correctly you must run the scripts in the `scripts/` folder to generate the tracking and pitch-control files, and provide the match video synchronized with the tracking data. The video is not included in this repository (listed in `.gitignore`), so you need to obtain it separately and place it in `public/data/`.
+
+This project is designed to be easily extended to any match: once you provide the appropriate tracking files and a synchronized video, the dashboard can be used for other games with minimal changes.
+
+## How to Run
+
+### 1. Generate required data
+
+Run the following scripts from the `scripts/` folder in order:
+
+```bash
+python scripts/create_enriched_tracking_json.py
+python scripts/compute_pitch_control_jsonl.py
+python scripts/compute_average_pitch_control_sw.py
+python scripts/compute_ball_touch_map_sw.py
+python scripts/sync_video_timestamps.py
+
+### 2. Quick Start
 
 ```bash
 npm install
@@ -10,40 +44,6 @@ npm run dev
 ```
 
 Open `http://localhost:5173` in your browser.
-
-## Data Used
-
-The main files are located in `public/data/`:
-
-- `1886347_tracking_extrapolated.jsonl`
-- `1886347_enriched_tracking.jsonl`
-- `1886347_pitch_control.jsonl`
-- `1886347_pitch_control_sw_average.jsonl`
-- `1886347_pitch_control_minute_control.jsonl`
-- `1886347_ball_touch_map_sw.jsonl`
-- `1886347_match.json`
-- `video_sync.json`
-
-## Key Components
-
-- `src/components/TrackingRadarWithDataLoader.jsx`: Main dashboard component with 2D canvas, time controls, what-if analysis, and analytics visualizations.
-- `src/components/VideoPlayer.jsx`: Video player synchronized with tracking data timestamps.
-- `src/components/TrackingRadar.jsx`: Simplified mock visualization component.
-
-## Utility Scripts
-
-The `scripts/` folder contains:
-
-- Pitch control calculation
-- Enriched tracking data generation
-- Video timestamp synchronization
-- Player speed and acceleration metrics export
-
-## Required Data for the Dashboard
-
-To display the dashboard correctly you must run the scripts in the `scripts/` folder to generate the tracking and pitch-control files, and provide the match video synchronized with the tracking data. The tracking files and the video are not included in this repository (they are listed in `.gitignore`), so you need to obtain them separately and place them in `public/data/` using the filenames expected by the app (see the list in the "Data Used" section above).
-
-This project is designed to be easily extended to any match: once you provide the appropriate tracking files and a synchronized video, the dashboard can be used for other games with minimal changes.
 
 ## Notes
 
