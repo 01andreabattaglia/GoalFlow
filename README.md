@@ -47,6 +47,4 @@ Open `http://localhost:5173` in your browser.
 
 ## Notes
 
-- Default FPS: `10`
-- Default pitch size: `104m × 68m`
 - For more details: see documentation in `docs/`
